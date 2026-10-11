@@ -36,7 +36,7 @@ function currentVendor() {
 function updateBalancePreview() {
   const vendor = currentVendor();
   if (!vendor) {
-    balanceAfter.textContent = 'Select a vendor';
+    balanceAfter.textContent = 'Select a customer';
     balanceAfter.classList.remove('is-error');
     paymentButton.disabled = true;
     return;
@@ -58,7 +58,7 @@ function renderPayments() {
   paymentsBody.replaceChildren();
   document.querySelector('#selected-vendor-label').textContent = vendor
     ? `${vendor.vendorName} · outstanding ${formatAmount(vendor.unpaidAmount)}`
-    : 'Select a vendor to view payments';
+    : 'Select a customer to view receipts';
   for (const payment of vendor?.payments || []) {
     const row = document.createElement('tr');
     row.append(
@@ -69,7 +69,12 @@ function renderPayments() {
     );
     paymentsBody.append(row);
   }
-  document.querySelector('#payments-empty').hidden = Boolean(!vendor || vendor.payments.length);
+  const paymentsEmpty = document.querySelector('#payments-empty');
+  const importedPaidAmount = Number(vendor?.importedPaidAmount) || 0;
+  const importedReceiptsNote = document.querySelector('#imported-receipts-note');
+  importedReceiptsNote.textContent = `${formatAmount(importedPaidAmount)} was already recorded as received in the imported tracker. Receipt dates were not included in that workbook.`;
+  importedReceiptsNote.hidden = !vendor || importedPaidAmount <= 0;
+  paymentsEmpty.hidden = Boolean(!vendor || vendor.payments.length);
 }
 function renderVendors() {
   const search = vendorSearch.value.trim().toLocaleLowerCase();
@@ -111,7 +116,7 @@ function renderSummary(summary) {
 }
 function renderVendorOptions() {
   const previousSelection = selectedVendorName || vendorSelect.value;
-  vendorSelect.replaceChildren(new Option('Select a vendor', ''));
+  vendorSelect.replaceChildren(new Option('Select a customer', ''));
   for (const vendor of vendors) vendorSelect.add(new Option(vendor.vendorName, vendor.vendorName));
   if (vendors.some((vendor) => vendor.vendorName === previousSelection)) {
     vendorSelect.value = previousSelection;
@@ -139,8 +144,8 @@ async function readApiResponse(response, fallbackMessage) {
 async function loadExplore() {
   try {
     const response = await fetch('/api/explore');
-    const result = await readApiResponse(response, 'Unable to load vendor balances.');
-    if (!result.summary || !Array.isArray(result.vendors)) throw new Error('The vendor balance response is incomplete. Restart the bill book server and try again.');
+    const result = await readApiResponse(response, 'Unable to load customer balances.');
+    if (!result.summary || !Array.isArray(result.vendors)) throw new Error('The customer balance response is incomplete. Restart the bill book server and try again.');
     vendors = result.vendors;
     renderSummary(result.summary);
     renderVendorOptions();
@@ -150,7 +155,7 @@ async function loadExplore() {
     loadError.hidden = true;
     loadError.textContent = '';
   } catch (error) {
-    loadError.textContent = error.message || 'Unable to load vendor balances.';
+    loadError.textContent = error.message || 'Unable to load customer balances.';
     loadError.hidden = false;
   }
 }

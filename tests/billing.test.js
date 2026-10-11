@@ -9,6 +9,7 @@ const pdfParse = require('../backend_dataserve/node_modules/pdf-parse');
 const { summarizeTaxByHsn } = require('../lib/tax-summary');
 const { amountInWords } = require('../lib/amount-in-words');
 const { createInvoicePdf } = require('../lib/invoice-pdf');
+const { buildEwayBillDraft } = require('../lib/eway-bill');
 
 const projectRoot = path.resolve(__dirname, '..');
 let temporaryDirectory;
@@ -49,6 +50,37 @@ test('treats line amounts as taxable values and calculates GST from inclusive an
   ]);
 });
 
+test('builds an NIC-shaped E-Way Bill JSON draft without inventing missing registration or tax details', () => {
+  const draft = buildEwayBillDraft({
+    billId: 'CGS-0001',
+    sourceInvoiceNo: 'CGS-0001',
+    invoiceDate: '2026-10-03',
+    sellerName: 'CGS Global Enterprises',
+    shipToName: 'Test Customer',
+    vehicleNo: 'KA02AF7135',
+    totalAmount: 118,
+    items: [
+      { description: 'Packing boxes', hsn: '481910', quantity: 1, unit: 'Bx', amount: 100, rateExclTax: 100, rateInclTax: 118 },
+      { description: 'Discount', hsn: '481910', quantity: 1, unit: 'Pc', amount: 10, rateExclTax: 10, rateInclTax: 10, isDiscount: true }
+    ]
+  });
+
+  assert.equal(draft.readyToSubmit, false);
+  assert.ok(draft.missingFields.includes('fromGstin'));
+  assert.equal(draft.payload.docNo, 'CGS-0001');
+  assert.equal(draft.payload.docDate, '03/10/2026');
+  assert.equal(draft.payload.fromTrdName, 'CGS Global Enterprises');
+  assert.equal(draft.payload.toTrdName, 'Test Customer');
+  assert.equal(draft.payload.totalValue, 100);
+  assert.equal(draft.payload.totInvValue, 118);
+  assert.equal(draft.calculatedTaxValue, 18);
+  assert.equal(draft.payload.vehicleNo, 'KA02AF7135');
+  assert.equal(draft.payload.itemList.length, 1);
+  assert.equal(draft.payload.itemList[0].hsnCode, '481910');
+  assert.equal(draft.payload.itemList[0].cgstRate, null);
+  assert.equal(draft.payload.fromGstin, null);
+});
+
 test('PDF paginates long item and HSN summaries without failing', async () => {
   const items = Array.from({ length: 40 }, (_, index) => ({
     slNo: index + 1,
@@ -65,9 +97,11 @@ test('PDF paginates long item and HSN summaries without failing', async () => {
     invoiceDate: '2026-10-03',
     dueDate: '2026-10-13',
     dueDays: 10,
+    sellerName: 'CGS Global Enterprises',
+    sellerAddress: '12 Market Road, Bengaluru, Karnataka - 560068',
     vehicleNo: 'KA02AF7135',
     shipToName: 'Pagination Test',
-    shipToAddress: 'Test address',
+    shipToAddress: '42 Lake View Road, Bengaluru, Karnataka - 560072',
     totalAmount: 4720,
     items
   });
@@ -75,6 +109,9 @@ test('PDF paginates long item and HSN summaries without failing', async () => {
   const pageCount = (pdfBuffer.toString('latin1').match(/\/Type\s*\/Page\b/g) || []).length;
   assert.ok(pageCount >= 3, `Expected multiple item and tax-summary pages, got ${pageCount}.`);
   assert.equal(pdfBuffer.subarray(0, 5).toString(), '%PDF-');
+  const parsedPdf = await pdfParse(pdfBuffer);
+  assert.match(parsedPdf.text, /12 Market Road, Bengaluru, Karnataka - 560068/);
+  assert.match(parsedPdf.text, /42 Lake View Road, Bengaluru, Karnataka - 560072/);
 });
 
 test('keeps invoice totals with the items when they fit on the same page', async () => {
@@ -94,7 +131,6 @@ test('keeps invoice totals with the items when they fit on the same page', async
     invoiceDate: '2026-10-04',
     vehicleNo: 'KA02AF7135',
     shipToName: 'Pagination Test',
-    shipToAddress: 'Test address',
     totalAmount: 790,
     discountAmount: 100,
     roundOffAmount: 0,
@@ -140,21 +176,22 @@ function waitForServer(child) {
   });
 }
 
-async function submitBill(shipToName, percentageIncrease, items, totalAmount) {
+async function submitBill(shipToName, purchasePrice, items, totalAmount, percentageIncrease = 0) {
   const response = await fetch(`${serverUrl}/api/bills`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       sellerName: 'CGS Global Enterprises',
-      sellerAddress: '17 Residency Road, Bengaluru',
+      sellerAddress: '12 Market Road, Bengaluru, Karnataka - 560068',
       shipToName,
-      shipToAddress: '42 Test Road, Bengaluru',
+      shipToAddress: '42 Lake View Road, Bengaluru, Karnataka - 560072',
       invoiceDate: '2026-10-03',
       vehicleNo: 'KA02AF7135',
       dueDays: 10,
       totalAmount,
-      paymentStatus: 'Unpaid',
+      purchasePrice,
       percentageIncrease,
+      paymentStatus: 'Unpaid',
       items
     })
   });
@@ -168,7 +205,7 @@ before(async () => {
   dataDirectory = path.join(temporaryDirectory, 'data');
   serverProcess = spawn(process.execPath, [path.join(projectRoot, 'server.js')], {
     cwd: projectRoot,
-    env: { ...process.env, PORT: '0', DATA_DIRECTORY: dataDirectory },
+    env: { ...process.env, PORT: '0', DATA_DIRECTORY: dataDirectory, PAYMENT_TRACKER_PATH: 'off' },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   serverUrl = await waitForServer(serverProcess);
@@ -182,12 +219,12 @@ after(async () => {
   if (temporaryDirectory) await fs.rm(temporaryDirectory, { recursive: true, force: true });
 });
 
-test('appends percentage-adjusted bills to JSON and Excel and syncs payment status', async () => {
-  const first = await submitBill('Test Customer One', 10, [
-    { description: 'Test item A', hsn: '1234', quantity: 1, unit: 'Pc', rateExclTax: 100, rateInclTax: 110, amount: 100 },
-    { description: 'Test item B', hsn: '5678', quantity: 2, unit: 'Bx', rateExclTax: 100, rateInclTax: 110, amount: 200 }
-  ], 330);
-  const second = await submitBill('Test Customer Two', 0, [
+test('stores tracker-format bills and syncs payment status and derived profit', async () => {
+  const first = await submitBill('Test Customer One', 250, [
+    { description: 'Test item A', hsn: '1234', quantity: 1, unit: 'Pc', rateExclTax: 110, rateInclTax: 121, amount: 110 },
+    { description: 'Test item B', hsn: '5678', quantity: 2, unit: 'Bx', rateExclTax: 110, rateInclTax: 121, amount: 220 }
+  ], 363);
+  const second = await submitBill('Test Customer Two', null, [
     { description: 'Test item C', hsn: '9012', quantity: 1, unit: 'Kg', rateExclTax: 50, rateInclTax: 50, amount: 50 }
   ], 50);
 
@@ -201,11 +238,20 @@ test('appends percentage-adjusted bills to JSON and Excel and syncs payment stat
     [110, 121, 220]
   ]);
   assert.equal(firstDetail.totalAmount, 363);
+  assert.equal(firstDetail.profitAmount, 113);
+  assert.equal(firstDetail.profitRate, 0.452);
+  assert.equal(firstDetail.sellerAddress, '12 Market Road, Bengaluru, Karnataka - 560068');
+  assert.equal(firstDetail.shipToAddress, '42 Lake View Road, Bengaluru, Karnataka - 560072');
+  assert.equal(firstDetail.ewayBillDraft.payload.fromAddr1, firstDetail.sellerAddress);
+  assert.equal(firstDetail.ewayBillDraft.payload.toAddr1, firstDetail.shipToAddress);
   assert.equal(firstDetail.taxSummary.reduce((sum, row) => sum + row.taxAmount, 0), 33);
 
   const detailResponse = await fetch(`${serverUrl}/api/bills/${second.billId}`);
   const detail = await detailResponse.json();
   assert.equal(detail.dueDays, 10);
+  assert.equal(detail.purchasePrice, null);
+  assert.equal(detail.profitAmount, null);
+  assert.equal(detail.profitRate, null);
   assert.equal(detail.dueDate, '2026-10-13');
   assert.equal(detail.amountInWords, 'Indian Rupees Fifty Only');
   assert.deepEqual(detail.taxSummary, [{ hsn: '9012', taxableValue: 50, gstRate: 0, cgstRate: 0, cgstAmount: 0, sgstRate: 0, sgstAmount: 0, taxAmount: 0 }]);
@@ -234,7 +280,13 @@ test('appends percentage-adjusted bills to JSON and Excel and syncs payment stat
   const ledger = JSON.parse(await fs.readFile(path.join(dataDirectory, 'bills.json'), 'utf8'));
   assert.equal(ledger.length, 2);
   assert.deepEqual(ledger[0].items.map((item) => item.amount), [110, 220]);
-  assert.equal(ledger[0].items[0].amountBeforeIncrease, 100);
+  assert.equal(ledger[0].purchasePrice, 250);
+  assert.equal(ledger[0].profitAmount, 113);
+  assert.equal(ledger[0].profitRate, 0.452);
+  assert.equal(ledger[0].sellerAddress, '12 Market Road, Bengaluru, Karnataka - 560068');
+  assert.equal(ledger[0].shipToAddress, '42 Lake View Road, Bengaluru, Karnataka - 560072');
+  assert.equal(ledger[1].purchasePrice, null);
+  assert.equal(ledger[1].profitAmount, null);
   assert.deepEqual(ledger[0].items.map((item) => [item.rateExclTax, item.rateInclTax]), [
     [110, 121],
     [110, 121]
@@ -291,13 +343,19 @@ test('appends percentage-adjusted bills to JSON and Excel and syncs payment stat
   assert.equal(itemsSheet.getRow(2).getCell(9).value, 110);
   assert.equal(itemsSheet.getRow(3).getCell(9).value, 220);
   assert.equal(itemsSheet.getRow(4).getCell(9).value, 50);
-  assert.equal(billsSheet.getRow(2).getCell(9).value, 'Paid');
-  assert.equal(billsSheet.getRow(2).getCell(4).value, '17 Residency Road, Bengaluru');
-  assert.equal(billsSheet.getRow(2).getCell(5).value, 'Test Customer One');
-  assert.equal(billsSheet.getRow(2).getCell(6).value, '42 Test Road, Bengaluru');
-  assert.equal(billsSheet.getRow(2).getCell(7).value, 'KA02AF7135');
-  assert.equal(billsSheet.getRow(2).getCell(8).value, 363);
-  assert.equal(billsSheet.getRow(1).values.includes('Seller Name'), false);
+  assert.deepEqual(billsSheet.getRow(1).values.slice(1), [
+    'SL.NO', 'Date', 'Company', 'Invoice', 'Recived price', 'Billed price', '% age',
+    'Amount of profit', 'Amount Recived', 'Amount Balanced', 'Due days', 'Due on'
+  ]);
+  assert.equal(billsSheet.getRow(2).getCell(1).value, 1);
+  assert.equal(billsSheet.getRow(2).getCell(3).value, 'Test Customer One');
+  assert.equal(billsSheet.getRow(2).getCell(4).value, 'CGS-0001');
+  assert.equal(billsSheet.getRow(2).getCell(5).value, 250);
+  assert.equal(billsSheet.getRow(2).getCell(6).value, 363);
+  assert.equal(billsSheet.getRow(2).getCell(7).value, 0.452);
+  assert.equal(billsSheet.getRow(2).getCell(8).value, 113);
+  assert.equal(billsSheet.getRow(2).getCell(9).value, 363);
+  assert.equal(billsSheet.getRow(2).getCell(10).value, 0);
   assert.equal(workbook.getWorksheet('Payments').getRow(2).getCell(4).value, 20);
   assert.deepEqual(workbook.getWorksheet('Bills 2026-10').getRow(1).values.slice(1), billsSheet.getRow(1).values.slice(1));
   assert.equal(workbook.getWorksheet('Bills 2026-10').rowCount, 3);
@@ -311,16 +369,29 @@ test('appends percentage-adjusted bills to JSON and Excel and syncs payment stat
   for (const sheetName of ['Bills', 'Items', 'Metadata', 'Payments', 'Bills 2026-10']) {
     assert.ok(exportedWorkbook.getWorksheet(sheetName), `Expected ${sheetName} in Excel export`);
   }
-  assert.deepEqual(exportedWorkbook.worksheets.map((sheet) => sheet.name), ['Bills', 'Items', 'Payments', 'Bills 2026-10', 'Metadata']);
-  assert.equal(exportedWorkbook.getWorksheet('Bills').getRow(2).getCell(1).value, 'CGS-0001');
+  assert.deepEqual(exportedWorkbook.worksheets.map((sheet) => sheet.name), ['Bills', 'Bills 2026-10', 'Items', 'Payments', 'Metadata']);
+  assert.equal(exportedWorkbook.getWorksheet('Bills').getRow(2).getCell(4).value, 'CGS-0001');
   assert.equal(exportedWorkbook.getWorksheet('Items').getRow(2).getCell(1).value, 'CGS-0001');
 });
 
+test('applies percentage increase to line-item rates and amounts before calculating profit', async () => {
+  const result = await submitBill('Increased Price Customer', 100, [
+    { description: 'Increased item', hsn: '1234', quantity: 1, unit: 'Pc', rateExclTax: 100, rateInclTax: 110, amount: 100 }
+  ], 121, 10);
+
+  const response = await fetch(`${serverUrl}/api/bills/${result.billId}`);
+  const bill = await response.json();
+  assert.equal(bill.percentageIncrease, 10);
+  assert.deepEqual(bill.items.map((item) => [item.rateExclTax, item.rateInclTax, item.amount]), [[110, 121, 110]]);
+  assert.equal(bill.totalAmount, 121);
+  assert.equal(bill.profitAmount, 21);
+});
+
 test('deducts scheme/free item values from bill totals and records the discount across flows', async () => {
-  const result = await submitBill('Scheme Customer', 10, [
-    { description: 'Regular product', hsn: '1234', quantity: 2, unit: 'Pc', rateExclTax: 100, rateInclTax: 118, amount: 200 },
-    { description: 'Free scheme product', hsn: '1234', quantity: 1, unit: 'Pc', rateExclTax: 50, rateInclTax: 59, amount: 50, isDiscount: true }
-  ], 275);
+  const result = await submitBill('Scheme Customer', 180, [
+    { description: 'Regular product', hsn: '1234', quantity: 2, unit: 'Pc', rateExclTax: 110, rateInclTax: 129.8, amount: 220 },
+    { description: 'Free scheme product', hsn: '1234', quantity: 1, unit: 'Pc', rateExclTax: 55, rateInclTax: 64.9, amount: 55, isDiscount: true }
+  ], 260);
 
   const response = await fetch(`${serverUrl}/api/bills/${result.billId}`);
   const bill = await response.json();
@@ -370,19 +441,20 @@ test('deducts scheme/free item values from bill totals and records the discount 
   let billsRow;
   let discountRow;
   billsSheet.eachRow((row, rowNumber) => {
-    if (rowNumber > 1 && row.getCell(1).value === result.billId) billsRow = row;
+    if (rowNumber > 1 && row.getCell(4).value === result.billId) billsRow = row;
   });
   itemsSheet.eachRow((row, rowNumber) => {
     if (rowNumber > 1 && row.getCell(1).value === result.billId && row.getCell(2).value === 2) discountRow = row;
   });
-  assert.equal(billsRow.getCell(11).value, 55);
-  assert.equal(billsRow.getCell(12).value, 0.4);
-  assert.equal(billsRow.getCell(8).value, 260);
+  assert.equal(billsRow.getCell(5).value, 180);
+  assert.equal(billsRow.getCell(6).value, 260);
+  assert.equal(billsRow.getCell(8).value, 80);
+  assert.equal(billsRow.getCell(9).value, 0);
   assert.equal(discountRow.getCell(10).value, 'Yes');
 });
 
 test('deletes a bill from JSON, Excel, and history', async () => {
-  const bill = await submitBill('Delete Test Customer', 0, [
+  const bill = await submitBill('Delete Test Customer', 80, [
     { description: 'Delete test item', hsn: '1234', quantity: 1, unit: 'Pc', rateExclTax: 100, rateInclTax: 118, amount: 100 }
   ], 118);
 
@@ -404,7 +476,7 @@ test('deletes a bill from JSON, Excel, and history', async () => {
   for (const sheetName of ['Bills', 'Items', 'Bills 2026-10']) {
     let matchingRows = 0;
     workbook.getWorksheet(sheetName).eachRow((row, rowNumber) => {
-      if (rowNumber > 1 && row.getCell(1).value === bill.billId) matchingRows += 1;
+      if (rowNumber > 1 && row.getCell(sheetName === 'Items' ? 1 : 4).value === bill.billId) matchingRows += 1;
     });
     assert.equal(matchingRows, 0, `${sheetName} should not contain the deleted bill`);
   }
@@ -412,8 +484,63 @@ test('deletes a bill from JSON, Excel, and history', async () => {
   const repeatedDeleteResponse = await fetch(`${serverUrl}/api/bills/${bill.billId}`, { method: 'DELETE' });
   assert.equal(repeatedDeleteResponse.status, 404);
 
-  const nextBill = await submitBill('Post Delete Customer', 0, [
+  const nextBill = await submitBill('Post Delete Customer', 80, [
     { description: 'Post-delete test item', hsn: '1234', quantity: 1, unit: 'Pc', rateExclTax: 100, rateInclTax: 118, amount: 100 }
   ], 118);
   assert.notEqual(nextBill.billId, bill.billId, 'deleting the latest bill must not reuse its ID');
+});
+
+test('counts imported partial receipts in account balances and does not invent tax invoices', async () => {
+  const healthResponse = await fetch(`${serverUrl}/api/health`);
+  assert.deepEqual(await healthResponse.json(), { status: 'ok', version: '3' });
+
+  const ledgerPath = path.join(dataDirectory, 'bills.json');
+  const ledger = JSON.parse(await fs.readFile(ledgerPath, 'utf8'));
+  ledger.push(
+    {
+      billId: 'CGS-241',
+      source: 'payment-tracker',
+      sourceInvoiceNo: 'CGS-241',
+      invoiceDate: '2026-09-28',
+      shipToName: 'Imported Account',
+      totalAmount: 100,
+      paidAmount: 25,
+      paymentStatus: 'Unpaid',
+      items: []
+    },
+    {
+      billId: 'CGS-242',
+      source: 'payment-tracker',
+      sourceInvoiceNo: 'CGS-242',
+      invoiceDate: '2026-09-29',
+      shipToName: 'Imported Account',
+      totalAmount: 200,
+      paidAmount: 0,
+      paymentStatus: 'Unpaid',
+      items: []
+    }
+  );
+  await fs.writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`, 'utf8');
+
+  const exploreResponse = await fetch(`${serverUrl}/api/explore`);
+  assert.equal(exploreResponse.status, 200);
+  const explore = await exploreResponse.json();
+  const account = explore.vendors.find((vendor) => vendor.vendorName === 'Imported Account');
+  assert.deepEqual(
+    [account.totalAmount, account.paidAmount, account.unpaidAmount],
+    [300, 25, 275]
+  );
+
+  const statusResponse = await fetch(`${serverUrl}/api/bills/CGS-241/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paymentStatus: 'Paid' })
+  });
+  const updatedBill = await statusResponse.json();
+  assert.equal(statusResponse.status, 200);
+  assert.equal(updatedBill.paidAmount, 100);
+
+  const invoiceResponse = await fetch(`${serverUrl}/api/bills/CGS-242/pdf`);
+  assert.equal(invoiceResponse.status, 409);
+  assert.match((await invoiceResponse.json()).error, /original invoice line items/);
 });

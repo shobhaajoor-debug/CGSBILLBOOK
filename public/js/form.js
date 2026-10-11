@@ -10,10 +10,9 @@ const submitButton = document.querySelector('#submit-bill');
 const vehicleInput = document.querySelector('#vehicle-no');
 const increaseInput = document.querySelector('#percentage-increase');
 const dueDaysInput = document.querySelector('#due-days');
-const sameAsSellerInput = document.querySelector('#same-as-seller');
 const sellerNameInput = document.querySelector('#seller-name');
-const sellerAddressInput = document.querySelector('#seller-address');
 const shipToNameInput = document.querySelector('#ship-to-name');
+const sellerAddressInput = document.querySelector('#seller-address');
 const shipToAddressInput = document.querySelector('#ship-to-address');
 const vendorPdfInput = document.querySelector('#vendor-pdf');
 const extractPdfButton = document.querySelector('#extract-vendor-pdf');
@@ -99,13 +98,13 @@ function updateTotalFromRows() {
     const isDiscount = row.querySelector('[data-field="isDiscount"]').checked;
     const rateExclTax = Number(row.querySelector('[data-field="rateExclTax"]').value) || 0;
     const rateInclTax = Number(row.querySelector('[data-field="rateInclTax"]').value) || 0;
-    const gstRate = rateExclTax > 0 && rateInclTax > rateExclTax
-      ? Math.round(((rateInclTax - rateExclTax) / rateExclTax) * 10000) / 10000
+    const gstRate = rateExclTax > 0 && rateInclTax >= rateExclTax
+      ? Math.round(((rateInclTax - rateExclTax) / rateExclTax) * 100)
       : 0;
     const amountPaise = Math.round(finalAmount * 100);
     subtotalPaise += amountPaise;
     if (isDiscount) discountPaise += amountPaise;
-    else taxPaise += Math.round(amountPaise * gstRate);
+    else taxPaise += Math.round(amountPaise * gstRate / 100);
     row.querySelector('.amount-preview').textContent = isDiscount
       ? `Discount (excl. GST): −₹${formatIndianAmount(finalAmount)}`
       : `Excl. GST: ₹${formatIndianAmount(finalAmount)}`;
@@ -127,37 +126,16 @@ function clearError(input) {
   const error = document.getElementById(`${input.id}-error`);
   if (error) error.textContent = '';
 }
-function syncSellerToConsignee() {
-  const sameAsSeller = sameAsSellerInput.checked;
-  shipToNameInput.readOnly = sameAsSeller;
-  shipToAddressInput.readOnly = sameAsSeller;
-  if (!sameAsSeller) return;
-  shipToNameInput.value = sellerNameInput.value;
-  shipToAddressInput.value = sellerAddressInput.value;
-  clearError(shipToNameInput);
-  clearError(shipToAddressInput);
-}
 function setDraftField(input, value) {
   if (value === null || value === undefined || value === '') return;
   input.value = String(value);
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 function populateExtractedDraft(draft) {
-  sameAsSellerInput.checked = false;
-  syncSellerToConsignee();
   setDraftField(sellerNameInput, draft.sellerName);
-  setDraftField(sellerAddressInput, draft.sellerAddress);
   setDraftField(shipToNameInput, draft.shipToName);
+  setDraftField(sellerAddressInput, draft.sellerAddress);
   setDraftField(shipToAddressInput, draft.shipToAddress);
-
-  const normalizedSellerName = sellerNameInput.value.trim().toLocaleLowerCase();
-  const normalizedShipToName = shipToNameInput.value.trim().toLocaleLowerCase();
-  const normalizedSellerAddress = sellerAddressInput.value.trim().toLocaleLowerCase();
-  const normalizedShipToAddress = shipToAddressInput.value.trim().toLocaleLowerCase();
-  sameAsSellerInput.checked = Boolean(normalizedSellerName && normalizedSellerAddress)
-    && normalizedSellerName === normalizedShipToName
-    && normalizedSellerAddress === normalizedShipToAddress;
-  syncSellerToConsignee();
 
   setDraftField(document.querySelector('#invoice-date'), draft.invoiceDate);
   setDraftField(vehicleInput, draft.vehicleNo);
@@ -186,7 +164,7 @@ function populateExtractedDraft(draft) {
         customUnit.value = extractedItem.unit || '';
       }
       const calculatedAmount = Number(extractedItem.quantity) * Number(extractedItem.rateExclTax);
-      row.querySelector('[data-field="amount"]').value = Number(extractedItem.amount ?? calculatedAmount).toFixed(2);
+      row.querySelector('[data-field="amount"]').value = Number(calculatedAmount).toFixed(2);
     });
     renumberRows();
     updateTotalFromRows();
@@ -212,31 +190,39 @@ async function extractVendorPdf() {
   extractPdfButton.classList.add('is-loading');
   extractPdfButton.querySelector('.button-label').textContent = 'Extracting…';
   extractStatus.classList.remove('is-error');
-  extractStatus.textContent = 'Analyzing the PDF layout, extracting invoice fields, and saving the source text…';
+  extractStatus.textContent = 'Analyzing the PDF and extracting invoice fields locally…';
   try {
+    const healthResponse = await fetch('http://127.0.0.1:3001/api/health');
+    const health = await healthResponse.json();
+    if (!healthResponse.ok || health.version !== '3') {
+      throw new Error('The PDF analyzer is an older version. Close its server window and restart the bill book before extracting invoices.');
+    }
     const formData = new FormData();
     formData.append('pdf', file);
     const response = await fetch('http://127.0.0.1:3001/api/extract', { method: 'POST', body: formData });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'PDF extraction failed.');
-    if (result.rawTextSaved) {
+    if (result.rawText) {
       extractContentText.textContent = result.rawText || '';
       extractContent.hidden = false;
+    } else {
+      extractContent.hidden = true;
+      extractContentText.textContent = '';
     }
     if (result.draft) {
       populateExtractedDraft(result.draft);
       if (result.warning) {
         extractStatus.classList.remove('is-error');
         extractStatus.classList.add('is-warning');
-        extractStatus.textContent = result.warning;
+        extractStatus.textContent = `${result.warning} Review the full seller and customer addresses before submitting.`;
       } else {
         extractStatus.classList.remove('is-error', 'is-warning');
-        extractStatus.textContent = `Full PDF text and structured draft saved for ${result.uploadedFileName}. Review the fields before submitting.`;
+        extractStatus.textContent = `Bill fields, including full addresses, extracted from ${result.uploadedFileName}. Review everything before submitting.`;
       }
     } else {
       extractStatus.classList.remove('is-error');
       extractStatus.classList.add('is-warning');
-      extractStatus.textContent = result.warning || `Full text from ${result.uploadedFileName} was copied to backend_dataserve/data/extracted-content.json. No bill fields were autofilled.`;
+      extractStatus.textContent = result.warning || `Extracted text from ${result.uploadedFileName} is available on this page only and was not saved. No bill fields were autofilled.`;
     }
   } catch (error) {
     extractStatus.classList.add('is-error');
@@ -270,7 +256,7 @@ function createItemRow() {
     <td><input data-field="quantity" type="number" min="0.01" step="any" inputmode="decimal" aria-label="Quantity" required><small class="field-error row-error" data-error="quantity"></small></td>
     <td><select data-field="unit" aria-label="Unit"><option value="">Select unit</option><option>Bx</option><option>Bg</option><option>Pc</option><option>Kg</option><option>Ltr</option><option value="Other">Other</option></select><input class="unit-other" data-field="unitOther" type="text" aria-label="Custom unit" placeholder="Enter unit" hidden><small class="field-error row-error" data-error="unit"></small></td>
     <td><input data-field="rateExclTax" type="number" min="0" step="0.01" inputmode="decimal" aria-label="Rate excluding tax"></td>
-    <td><input data-field="rateInclTax" type="number" min="0" step="0.01" inputmode="decimal" aria-label="Rate including tax"></td>
+    <td><input data-field="rateInclTax" type="number" min="0" step="0.01" inputmode="decimal" aria-label="Rate including tax"><small class="field-error row-error" data-error="rateInclTax"></small></td>
     <td><input data-field="amount" type="number" min="0" step="0.01" inputmode="decimal" aria-label="Amount before increase"><small class="amount-preview">Final: ₹0.00</small><small class="field-error row-error" data-error="amount"></small></td>
     <td><label class="discount-item-toggle"><input data-field="isDiscount" type="checkbox" aria-label="Mark scheme or free item as a discount"><span>Deduct</span></label></td>
     <td><button class="remove-item" type="button" aria-label="Remove line item">Remove</button></td>`;
@@ -322,7 +308,7 @@ function clearRowError(row, field) {
 }
 function validateForm() {
   let valid = true;
-  const requiredInputs = ['seller-name', 'seller-address', 'ship-to-name', 'ship-to-address', 'invoice-date', 'vehicle-no'];
+  const requiredInputs = ['seller-name', 'ship-to-name', 'invoice-date', 'vehicle-no'];
   for (const id of requiredInputs) {
     const input = document.getElementById(id);
     if (!input.value.trim()) {
@@ -334,14 +320,14 @@ function validateForm() {
     setError(dueDaysInput, 'Enter at least 1 due day.');
     valid = false;
   } else clearError(dueDaysInput);
-  if (totalInput.value === '' || !Number.isFinite(Number(totalInput.value)) || Number(totalInput.value) < 0) {
-    setError(totalInput, 'Enter a valid total amount.');
-    valid = false;
-  } else clearError(totalInput);
   if (increaseInput.value !== '' && (!Number.isFinite(Number(increaseInput.value)) || Number(increaseInput.value) < 0)) {
     setError(increaseInput, 'Enter a non-negative percentage.');
     valid = false;
   } else clearError(increaseInput);
+  if (totalInput.value === '' || !Number.isFinite(Number(totalInput.value)) || Number(totalInput.value) < 0) {
+    setError(totalInput, 'Enter a valid total amount.');
+    valid = false;
+  } else clearError(totalInput);
   itemsBody.querySelectorAll('.item-row').forEach((row) => {
     const description = row.querySelector('[data-field="description"]');
     const hsn = row.querySelector('[data-field="hsn"]');
@@ -349,12 +335,15 @@ function validateForm() {
     const unit = row.querySelector('[data-field="unit"]');
     const customUnit = row.querySelector('[data-field="unitOther"]');
     const amount = row.querySelector('[data-field="amount"]');
+    const rateExclTax = row.querySelector('[data-field="rateExclTax"]');
+    const rateInclTax = row.querySelector('[data-field="rateInclTax"]');
     const checks = [
       [description, 'description', description.value.trim() ? '' : 'Description is required.'],
       [hsn, 'hsn', hsn.value && !/^\d{4,8}$/.test(hsn.value) ? 'Enter 4 to 8 digits.' : ''],
       [quantity, 'quantity', Number(quantity.value) > 0 ? '' : 'Enter a quantity greater than 0.'],
       [unit, 'unit', unit.value === 'Other' ? (customUnit.value.trim() ? '' : 'Enter a unit.') : (unit.value ? '' : 'Select a unit.')],
-      [amount, 'amount', amount.value !== '' && Number(amount.value) >= 0 ? '' : 'Enter a valid amount.']
+      [amount, 'amount', amount.value !== '' && Number(amount.value) >= 0 ? '' : 'Enter a valid amount.'],
+      [rateInclTax, 'rateInclTax', Number(rateInclTax.value) > 0 && Number(rateInclTax.value) < Number(rateExclTax.value) ? 'Including-tax rate cannot be less than excluding-tax rate.' : '']
     ];
     for (const [input, field, message] of checks) {
       const error = row.querySelector(`[data-error="${field}"]`);
@@ -407,7 +396,6 @@ function resetBillForm() {
   extractStatus.classList.remove('is-error', 'is-warning');
   extractContent.hidden = true;
   extractContentText.textContent = '';
-  syncSellerToConsignee();
   totalInput.value = '0.00';
   discountFormatted.hidden = true;
   discountFormatted.textContent = '';
@@ -419,9 +407,9 @@ form.addEventListener('submit', async (event) => {
   if (!validateForm()) return;
   const payload = {
     sellerName: document.querySelector('#seller-name').value.trim(),
-    sellerAddress: document.querySelector('#seller-address').value.trim(),
+    sellerAddress: sellerAddressInput.value.trim(),
     shipToName: document.querySelector('#ship-to-name').value.trim(),
-    shipToAddress: document.querySelector('#ship-to-address').value.trim(),
+    shipToAddress: shipToAddressInput.value.trim(),
     invoiceDate: document.querySelector('#invoice-date').value,
     vehicleNo: vehicleInput.value.trim(),
     dueDays: Number(dueDaysInput.value),
@@ -434,14 +422,21 @@ form.addEventListener('submit', async (event) => {
   submitButton.classList.add('is-loading');
   try {
     const response = await fetch('/api/bills', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const result = await response.json();
+    let result;
+    try {
+      result = await response.json();
+    } catch {
+      throw new Error('The bill server returned an unexpected response. Restart the app and try submitting again.');
+    }
     if (!response.ok) throw new Error(result.error || 'Unable to save bill.');
     showToast(`Bill ${result.billId} saved successfully.`);
     resetBillForm();
     loadPaymentSummary();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (error) {
-    showToast(error.message || 'Unable to save bill.', true);
+    showToast(error instanceof TypeError
+      ? 'Could not reach the bill server. Restart the app and try again.'
+      : (error.message || 'Unable to save bill.'), true);
   } finally {
     submitButton.disabled = false;
     submitButton.classList.remove('is-loading');
@@ -451,7 +446,6 @@ form.addEventListener('submit', async (event) => {
 document.querySelector('#add-item').addEventListener('click', createItemRow);
 document.querySelector('#clear-form').addEventListener('click', resetBillForm);
 extractPdfButton.addEventListener('click', extractVendorPdf);
-sameAsSellerInput.addEventListener('change', syncSellerToConsignee);
 vehicleInput.addEventListener('input', () => {
   vehicleInput.value = vehicleInput.value.toUpperCase().replace(/\s/g, '');
   clearError(vehicleInput);
@@ -469,12 +463,10 @@ increaseInput.addEventListener('input', () => {
   updateTotalFromRows();
 });
 form.addEventListener('input', (event) => {
-  if (sameAsSellerInput.checked && (event.target === sellerNameInput || event.target === sellerAddressInput)) syncSellerToConsignee();
-  if (event.target.matches('#seller-name, #seller-address, #ship-to-name, #ship-to-address, #invoice-date, #due-days')) clearError(event.target);
+  if (event.target.matches('#seller-name, #ship-to-name, #invoice-date, #due-days')) clearError(event.target);
 });
 
 document.querySelector('#invoice-date').value = today();
-syncSellerToConsignee();
 createItemRow();
 updateTotalDisplay();
 loadPaymentSummary();

@@ -19,9 +19,10 @@
         <span class="brand-copy"><strong>CGS GLOBAL ENTERPRISES</strong><small>Reliable billing, clearly recorded.</small></span>
       </a>
       <nav class="main-nav" aria-label="Main navigation">
-        <a class="nav-link is-active" href="/" aria-current="page">New Bill</a>
-        <a class="nav-link" href="/explore.html">Explore Bills</a>
-        <a class="nav-link" href="/history.html">History</a>
+        <a class="nav-link" href="/">Overview</a>
+        <a class="nav-link is-active" href="/index.html" aria-current="page">New Bill</a>
+        <a class="nav-link" href="/explore.html">Accounts</a>
+        <a class="nav-link" href="/history.html">Bill history</a>
       </nav>
     </div>
   </header>
@@ -46,7 +47,7 @@
           <div class="field-group vendor-file-field">
             <label for="vendor-pdf">Vendor invoice PDF</label>
             <input id="vendor-pdf" name="vendorPdf" type="file" accept="application/pdf,.pdf" aria-describedby="vendor-pdf-hint">
-            <small class="field-hint" id="vendor-pdf-hint">No sign-in required. Extracted text and bill fields are saved as JSON drafts for review.</small>
+            <small class="field-hint" id="vendor-pdf-hint">Extracted seller and customer addresses are saved with the bill. Source PDF text stays on this page only.</small>
           </div>
           <button class="button button-secondary" id="extract-vendor-pdf" type="button"><span class="button-label">Extract bill details</span><span class="button-spinner" aria-hidden="true"></span></button>
         </div>
@@ -58,11 +59,7 @@
       </section>
 
       <section class="panel" aria-labelledby="parties-heading">
-        <div class="panel-heading"><div><p class="section-index">01</p><h2 id="parties-heading">Parties & invoice</h2></div></div>
-        <div class="party-copy-control">
-          <label class="same-party-option" for="same-as-seller"><input id="same-as-seller" type="checkbox" checked><span>Consignee same as seller</span></label>
-          <small class="field-hint">Uncheck to enter different consignee details.</small>
-        </div>
+        <div class="panel-heading"><div><p class="section-index">01</p><h2 id="parties-heading">Customer & invoice</h2></div></div>
         <div class="party-grid">
           <fieldset class="party-block">
             <legend>Seller</legend>
@@ -72,9 +69,8 @@
               <small class="field-error" id="seller-name-error"></small>
             </div>
             <div class="field-group">
-              <label for="seller-address">Address <span class="required-star">*</span></label>
-              <textarea id="seller-address" name="sellerAddress" rows="3" autocomplete="street-address" required></textarea>
-              <small class="field-error" id="seller-address-error"></small>
+              <label for="seller-address">Full address</label>
+              <textarea id="seller-address" name="sellerAddress" rows="3" autocomplete="street-address"></textarea>
             </div>
           </fieldset>
           <fieldset class="party-block">
@@ -85,9 +81,8 @@
               <small class="field-error" id="ship-to-name-error"></small>
             </div>
             <div class="field-group">
-              <label for="ship-to-address">Address <span class="required-star">*</span></label>
-              <textarea id="ship-to-address" name="shipToAddress" rows="3" autocomplete="street-address" required></textarea>
-              <small class="field-error" id="ship-to-address-error"></small>
+              <label for="ship-to-address">Full address</label>
+              <textarea id="ship-to-address" name="shipToAddress" rows="3" autocomplete="street-address"></textarea>
             </div>
           </fieldset>
         </div>
@@ -117,28 +112,28 @@
         <div class="panel-heading panel-heading-row"><div><p class="section-index">02</p><h2 id="items-heading">Line items</h2></div><button class="button button-secondary" id="add-item" type="button"><span aria-hidden="true">+</span> Add item</button></div>
         <div class="table-scroll" tabindex="0" aria-label="Line items table; scroll horizontally on small screens">
           <table class="items-table">
-            <thead><tr><th scope="col">Sl No</th><th scope="col">Description of goods <span class="required-star">*</span></th><th scope="col">HSN</th><th scope="col">Quantity <span class="required-star">*</span></th><th scope="col">Unit <span class="required-star">*</span></th><th scope="col">Rate (excl. tax)</th><th scope="col">Rate (incl. tax)</th><th scope="col">Amount before increase</th><th scope="col">Discount</th><th scope="col"><span class="sr-only">Remove item</span></th></tr></thead>
+            <thead><tr><th scope="col">Sl No</th><th scope="col">Description of goods <span class="required-star">*</span></th><th scope="col">HSN</th><th scope="col">Quantity <span class="required-star">*</span></th><th scope="col">Unit <span class="required-star">*</span></th><th scope="col">Rate (excl. tax)</th><th scope="col">Rate (incl. tax)</th><th scope="col">Line amount</th><th scope="col">Discount</th><th scope="col"><span class="sr-only">Remove item</span></th></tr></thead>
             <tbody id="items-body"></tbody>
           </table>
         </div>
-        <p class="table-note">Line amounts are calculated from quantity × rate (excl. GST). GST is added to the final total; scheme/free item amounts are deducted before tax.</p>
+        <p class="table-note">Line amounts are calculated from quantity × rate (excl. GST). GST is added to the final billed price; scheme/free item amounts are deducted before tax.</p>
       </section>
 
       <section class="panel totals-panel" aria-labelledby="payment-heading">
         <div class="totals-layout">
-          <div class="field-group payment-field">
-            <label for="payment-status">Payment status</label>
-            <select id="payment-status" name="paymentStatus"><option value="Unpaid" selected>Unpaid</option><option value="Paid">Paid</option></select>
-            <small class="field-hint">Status is recorded manually for the ship-to customer.</small>
-          </div>
           <div class="field-group increase-field">
             <label for="percentage-increase">Percentage of increase</label>
             <div class="percentage-entry"><input id="percentage-increase" name="percentageIncrease" type="number" min="0" step="0.01" value="0" inputmode="decimal" aria-describedby="increase-hint percentage-increase-error"><span aria-hidden="true">%</span></div>
-            <small class="field-hint" id="increase-hint">Applied to every rate and line-item amount before discounts.</small>
+            <small class="field-hint" id="increase-hint">Applied to rates and line-item amounts before discounts.</small>
             <small class="field-error" id="percentage-increase-error"></small>
           </div>
+          <div class="field-group payment-field">
+            <label for="payment-status">Payment status</label>
+            <select id="payment-status" name="paymentStatus"><option value="Unpaid" selected>Unpaid</option><option value="Paid">Paid</option></select>
+            <small class="field-hint">Status is recorded for this bill.</small>
+          </div>
           <div class="total-box">
-            <label for="total-amount">Total amount (incl. GST)</label>
+            <label for="total-amount">Billed price (incl. GST)</label>
             <div class="total-entry"><span class="currency-prefix" aria-hidden="true">₹</span><input id="total-amount" name="totalAmount" type="number" min="0" step="0.01" value="0.00" inputmode="decimal" readonly aria-describedby="total-formatted tax-formatted discount-formatted amount-words"></div>
             <p class="total-formatted" id="total-formatted" aria-live="polite">₹0.00</p>
             <p class="tax-formatted" id="tax-formatted" hidden></p>

@@ -22,13 +22,18 @@ function addTextCell(row, value, className) {
   row.append(cell);
 }
 function renderBill(bill) {
+  if (bill.source === 'payment-tracker') {
+    renderTrackerRecord(bill);
+    return;
+  }
+  document.querySelector('#invoice-seller-name').textContent = bill.sellerName || 'CGS GLOBAL ENTERPRISES';
   document.querySelector('#invoice-number').textContent = bill.billId || '';
   document.querySelector('#invoice-date').textContent = formatDate(bill.invoiceDate);
   document.querySelector('#vehicle-number').textContent = bill.vehicleNo || '—';
-  document.querySelector('#bill-to-name').textContent = bill.shipToName || '';
-  document.querySelector('#bill-to-address').textContent = bill.shipToAddress || '';
-  document.querySelector('#ship-to-name').textContent = bill.shipToName || '';
-  document.querySelector('#ship-to-address').textContent = bill.shipToAddress || '';
+  document.querySelector('#invoice-party-seller-name').textContent = bill.sellerName || 'CGS GLOBAL ENTERPRISES';
+  document.querySelector('#invoice-party-seller-address').textContent = bill.sellerAddress || '';
+  document.querySelector('#customer-name').textContent = bill.shipToName || '';
+  document.querySelector('#customer-address').textContent = bill.shipToAddress || '';
   document.querySelector('#amount-in-words').textContent = bill.amountInWords || '';
   document.title = `${bill.billId || 'Invoice'} | CGS Global Enterprises`;
 
@@ -94,6 +99,44 @@ function renderBill(bill) {
   downloadButton.disabled = false;
   loading.hidden = true;
   invoice.hidden = false;
+}
+
+function renderTrackerRecord(bill) {
+  const total = Number(bill.totalAmount) || 0;
+  const received = Number(bill.paidAmount) || 0;
+  const state = received >= total ? 'Paid' : received > 0 ? 'Partial' : 'Unpaid';
+  document.querySelector('#tracker-record-invoice').textContent = bill.sourceInvoiceNo || bill.billId || '—';
+  document.querySelector('#tracker-record-heading').textContent = bill.shipToName || 'Customer record';
+  document.querySelector('#tracker-record-date').textContent = formatDate(bill.invoiceDate);
+  document.querySelector('#tracker-record-due-date').textContent = formatDate(bill.dueDate);
+  document.querySelector('#tracker-record-due-terms').textContent = bill.sourceDueTerms || (bill.dueDays ? `${bill.dueDays} days` : '—');
+  document.querySelector('#tracker-record-sheet').textContent = bill.sourceSheet || '—';
+  document.querySelector('#tracker-record-total').textContent = formatMoney(total);
+  document.querySelector('#tracker-record-paid').textContent = formatMoney(received);
+  document.querySelector('#tracker-record-balance').textContent = formatMoney(total - received);
+  document.querySelector('#tracker-record-purchase').textContent = formatMoney(bill.purchasePrice);
+  document.querySelector('#tracker-record-rate').textContent = `${(Number(bill.profitRate) * 100 || 0).toFixed(2)}%`;
+  document.querySelector('#tracker-record-profit').textContent = formatMoney(bill.profitAmount);
+  document.querySelector('#tracker-record-source-status').textContent = bill.sourceStatus || '—';
+  document.querySelector('#tracker-record-delay').textContent = bill.sourceDelayDays || '—';
+  const status = document.querySelector('#tracker-record-status');
+  status.className = `status-badge ${state.toLocaleLowerCase()}`;
+  status.textContent = state === 'Partial' ? 'Partially paid' : state;
+  const sourceFields = document.querySelector('#tracker-source-fields');
+  sourceFields.replaceChildren();
+  for (const [label, value] of Object.entries(bill.sourceFields || {})) {
+    const wrapper = document.createElement('div');
+    const term = document.createElement('dt');
+    term.textContent = label;
+    const detail = document.createElement('dd');
+    detail.textContent = value === '' || value === null ? '—' : String(value);
+    wrapper.append(term, detail);
+    sourceFields.append(wrapper);
+  }
+  document.querySelector('#download-pdf').hidden = true;
+  document.querySelector('#bill-loading').hidden = true;
+  document.querySelector('#tracker-record').hidden = false;
+  document.title = `${bill.billId || 'Tracker record'} | CGS Global Enterprises`;
 }
 
 async function loadBill() {

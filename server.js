@@ -6,6 +6,8 @@ const path = require('node:path');
 const { createInvoicePdf } = require('./lib/invoice-pdf');
 const { summarizeTaxByHsn } = require('./lib/tax-summary');
 const { amountInWords } = require('./lib/amount-in-words');
+const { buildEwayBillDraft } = require('./lib/eway-bill');
+const { createPaymentTrackerSync } = require('./lib/payment-tracker-sync');
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
@@ -13,20 +15,24 @@ const DATA_DIRECTORY = process.env.DATA_DIRECTORY || path.join(__dirname, 'data'
 const WORKBOOK_PATH = path.join(DATA_DIRECTORY, 'bills.xlsx');
 const JSON_PATH = path.join(DATA_DIRECTORY, 'bills.json');
 const PAYMENTS_PATH = path.join(DATA_DIRECTORY, 'payments.json');
+const PAYMENT_TRACKER_PATH = process.env.PAYMENT_TRACKER_PATH === 'off'
+  ? null
+  : process.env.PAYMENT_TRACKER_PATH || path.join(__dirname, 'CGS-Payment Tracker-Latest.xlsx');
 const EXTRACTOR_SERVER_PATH = path.join(__dirname, 'backend_dataserve', 'server.js');
+const syncPaymentTracker = createPaymentTrackerSync({ workbookPath: PAYMENT_TRACKER_PATH, ledgerPath: JSON_PATH });
 const BILL_COLUMNS = [
-  { header: 'Bill ID', key: 'billId', width: 16 },
-  { header: 'Created At', key: 'createdAt', width: 24 },
-  { header: 'Invoice Date', key: 'invoiceDate', width: 16 },
-  { header: 'Seller Address', key: 'sellerAddress', width: 38 },
-  { header: 'Ship To Name', key: 'shipToName', width: 24 },
-  { header: 'Ship To Address', key: 'shipToAddress', width: 38 },
-  { header: 'Vehicle No', key: 'vehicleNo', width: 18 },
-  { header: 'Total Amount', key: 'totalAmount', width: 18, style: { numFmt: '#,##0.00' } },
-  { header: 'Payment Status', key: 'paymentStatus', width: 18 },
-  { header: 'Paid On', key: 'paidOn', width: 16 },
-  { header: 'Discount Amount', key: 'discountAmount', width: 18, style: { numFmt: '#,##0.00' } },
-  { header: 'Round Off', key: 'roundOffAmount', width: 14, style: { numFmt: '#,##0.00' } }
+  { header: 'SL.NO', key: 'slNo', width: 9 },
+  { header: 'Date', key: 'date', width: 15, style: { numFmt: 'dd-mmm-yyyy' } },
+  { header: 'Company', key: 'company', width: 38 },
+  { header: 'Invoice', key: 'invoice', width: 16 },
+  { header: 'Recived price', key: 'receivedPrice', width: 17, style: { numFmt: '#,##0.00' } },
+  { header: 'Billed price', key: 'billedPrice', width: 17, style: { numFmt: '#,##0.00' } },
+  { header: '% age', key: 'profitRate', width: 12, style: { numFmt: '0.00%' } },
+  { header: 'Amount of profit', key: 'profitAmount', width: 19, style: { numFmt: '#,##0.00' } },
+  { header: 'Amount Recived', key: 'amountReceived', width: 19, style: { numFmt: '#,##0.00' } },
+  { header: 'Amount Balanced', key: 'amountBalanced', width: 19, style: { numFmt: '#,##0.00' } },
+  { header: 'Due days', key: 'dueDays', width: 12 },
+  { header: 'Due on', key: 'dueOn', width: 17, style: { numFmt: 'dd-mmm-yyyy' } }
 ];
 const PAYMENT_COLUMNS = [
   { header: 'Payment ID', key: 'paymentId', width: 18 },
@@ -60,28 +66,74 @@ function addDataWorksheet(workbook, name, columns, records) {
   const sheet = workbook.addWorksheet(name);
   const headerRow = sheet.getRow(1);
   sheet.columns = columns;
-  headerRow.font = { bold: true };
+  headerRow.font = { name: 'Times New Roman', bold: true, color: { argb: 'FFFF0000' }, size: 12 };
+  headerRow.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  headerRow.height = 27;
   sheet.views = [{ state: 'frozen', ySplit: 1 }];
-  for (const record of records) sheet.addRow(record);
+  records.forEach((record, index) => {
+    const row = sheet.addRow(record);
+    if (columns === BILL_COLUMNS) row.getCell('slNo').value = index + 1;
+  });
   sheet.autoFilter = { from: 'A1', to: `${sheet.getColumn(sheet.columnCount).letter}${Math.max(1, sheet.rowCount)}` };
   return sheet;
+}
+function excelDate(value) {
+  const dateText = String(value || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return '';
+  return new Date(`${dateText}T00:00:00.000Z`);
+}
+function trackerRowFromBill(bill) {
+  const billedPrice = Math.round((Number(bill.billedPrice ?? bill.totalAmount) || 0) * 100) / 100;
+  const amountReceived = Math.round((Number(bill.amountReceived ?? bill.paidAmount) || 0) * 100) / 100;
+  const hasPurchasePrice = bill.purchasePrice !== null && bill.purchasePrice !== undefined;
+  const receivedPrice = hasPurchasePrice ? Math.round((Number(bill.purchasePrice) || 0) * 100) / 100 : null;
+  const profitAmount = hasPurchasePrice
+    ? Math.round((billedPrice - receivedPrice + Number.EPSILON) * 100) / 100
+    : null;
+  return {
+    date: excelDate(bill.invoiceDate),
+    company: bill.shipToName || '',
+    invoice: bill.sourceInvoiceNo || bill.billId || '',
+    receivedPrice,
+    billedPrice,
+    profitRate: receivedPrice > 0 ? profitAmount / receivedPrice : null,
+    profitAmount,
+    amountReceived,
+    amountBalanced: Math.round((billedPrice - amountReceived + Number.EPSILON) * 100) / 100,
+    dueDays: Number.isFinite(Number(bill.dueDays)) ? Number(bill.dueDays) : '',
+    dueOn: excelDate(bill.dueDate) || bill.sourceDueTerms || ''
+  };
 }
 function monthSheetName(value) {
   const dateText = value instanceof Date ? value.toISOString().slice(0, 10) : String(value || '').slice(0, 10);
   return /^\d{4}-(0[1-9]|1[0-2])-\d{2}$/.test(dateText) ? `Bills ${dateText.slice(0, 7)}` : null;
 }
 function synchronizeMonthlySheets(workbook, billsSheet) {
-  const recordsByMonth = new Map();
+  const sourceSheetByInvoice = new Map();
+  for (const sheet of workbook.worksheets) {
+    if (['Bills', 'Items', 'Payments', 'Metadata'].includes(sheet.name)
+      || String(sheet.getRow(1).getCell('invoice').value || '').toLocaleLowerCase() !== 'invoice') continue;
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1 && row.getCell('invoice').value) {
+        sourceSheetByInvoice.set(String(row.getCell('invoice').value), sheet.name);
+      }
+    });
+  }
+  const recordsBySheet = new Map();
   billsSheet.eachRow((row, rowNumber) => {
-    if (rowNumber === 1 || !row.getCell('billId').value) return;
-    const name = monthSheetName(row.getCell('invoiceDate').value);
+    if (rowNumber === 1 || !row.getCell('invoice').value) return;
+    const bill = billFromRow(row);
+    const name = sourceSheetByInvoice.get(String(bill.sourceInvoiceNo))
+      || monthSheetName(bill.invoiceDate);
     if (!name) return;
-    if (!recordsByMonth.has(name)) recordsByMonth.set(name, []);
-    recordsByMonth.get(name).push(billFromRow(row));
+    if (!recordsBySheet.has(name)) recordsBySheet.set(name, []);
+    recordsBySheet.get(name).push(trackerRowFromBill(bill));
   });
-  const existingMonths = workbook.worksheets.filter((sheet) => /^Bills \d{4}-\d{2}$/.test(sheet.name));
-  for (const name of new Set([...existingMonths.map((sheet) => sheet.name), ...recordsByMonth.keys()])) {
-    addDataWorksheet(workbook, name, BILL_COLUMNS, recordsByMonth.get(name) || []);
+  const existingMonthlySheets = workbook.worksheets.filter((sheet) => (
+    /^Bills \d{4}-\d{2}$/.test(sheet.name) || recordsBySheet.has(sheet.name)
+  ));
+  for (const name of new Set([...existingMonthlySheets.map((sheet) => sheet.name), ...recordsBySheet.keys()])) {
+    addDataWorksheet(workbook, name, BILL_COLUMNS, recordsBySheet.get(name) || []);
   }
 }
 function readBillRows(workbook, records) {
@@ -89,7 +141,7 @@ function readBillRows(workbook, records) {
   const recordsByBillId = new Map(records.map((record) => [record.billId, record]));
   const rows = [];
   sheet.eachRow((row, rowNumber) => {
-    if (rowNumber > 1 && row.getCell('billId').value) {
+    if (rowNumber > 1 && row.getCell('invoice').value) {
       const workbookBill = billFromRow(row);
       const record = recordsByBillId.get(workbookBill.billId);
       rows.push(record
@@ -111,14 +163,17 @@ async function openWorkbook() {
   const existingMonthNames = workbook.worksheets
     .map((sheet) => sheet.name)
     .filter((name) => /^Bills \d{4}-\d{2}$/.test(name));
+  const sourceSheetNames = new Set(billLedger.records.map((bill) => bill.sourceSheet).filter(Boolean));
   let sequenceSheet = workbook.getWorksheet('Metadata');
   const previousSequence = sequenceSheet ? Number(sequenceSheet.getCell('A2').value) || 0 : 0;
   for (const sheet of [...workbook.worksheets]) {
-    if (['Bills', 'Items', 'Payments'].includes(sheet.name) || /^Bills \d{4}-\d{2}$/.test(sheet.name)) {
+    if (['Bills', 'Items', 'Payments'].includes(sheet.name)
+      || /^Bills \d{4}-\d{2}$/.test(sheet.name)
+      || sourceSheetNames.has(sheet.name)) {
       workbook.removeWorksheet(sheet.id);
     }
   }
-  const billsSheet = addDataWorksheet(workbook, 'Bills', BILL_COLUMNS, billLedger.records);
+  const billsSheet = addDataWorksheet(workbook, 'Bills', BILL_COLUMNS, billLedger.records.map(trackerRowFromBill));
   const itemRecords = billLedger.records.flatMap((bill) => (bill.items || []).map((item) => ({
     billId: bill.billId,
     slNo: item.slNo,
@@ -135,10 +190,10 @@ async function openWorkbook() {
   addDataWorksheet(workbook, 'Payments', PAYMENT_COLUMNS, paymentLedger.records);
   const recordsByMonth = new Map();
   for (const bill of billLedger.records) {
-    const name = monthSheetName(bill.invoiceDate);
+    const name = bill.sourceSheet || monthSheetName(bill.invoiceDate);
     if (!name) continue;
     if (!recordsByMonth.has(name)) recordsByMonth.set(name, []);
-    recordsByMonth.get(name).push(bill);
+    recordsByMonth.get(name).push(trackerRowFromBill(bill));
   }
   for (const name of new Set([...existingMonthNames, ...recordsByMonth.keys()])) {
     addDataWorksheet(workbook, name, BILL_COLUMNS, recordsByMonth.get(name) || []);
@@ -152,7 +207,7 @@ async function openWorkbook() {
     if (match) highestBillNumber = Math.max(highestBillNumber, Number(match[1]));
   }
   sequenceSheet.getCell('A2').value = Math.max(previousSequence, highestBillNumber);
-  const visibleSheetOrder = ['Bills', 'Items', 'Payments', ...[...recordsByMonth.keys()].sort()];
+  const visibleSheetOrder = ['Bills', ...recordsByMonth.keys(), 'Items', 'Payments'];
   const remainingSheets = workbook.worksheets.filter((sheet) => !visibleSheetOrder.includes(sheet.name) && sheet.name !== 'Metadata');
   [...visibleSheetOrder, ...remainingSheets.map((sheet) => sheet.name), 'Metadata']
     .forEach((name, index) => { workbook.getWorksheet(name).orderNo = index + 1; });
@@ -170,6 +225,7 @@ function sendFileError(response, error) {
   response.status(500).json({ error: 'Unable to access the bills workbook.' });
 }
 async function readJsonLedger() {
+  await syncPaymentTracker();
   try {
     const content = await fs.readFile(JSON_PATH, 'utf8');
     const records = JSON.parse(content);
@@ -229,8 +285,7 @@ function text(value) {
 }
 function validateBill(body) {
   const required = [
-    ['sellerName', 'Seller name'], ['sellerAddress', 'Seller address'], ['shipToName', 'Ship-to name'],
-    ['shipToAddress', 'Ship-to address'], ['invoiceDate', 'Invoice date'], ['vehicleNo', 'Vehicle number']
+    ['shipToName', 'Customer name'], ['invoiceDate', 'Invoice date'], ['vehicleNo', 'Vehicle number']
   ];
   for (const [key, label] of required) {
     if (!text(body[key])) return `${label} is required.`;
@@ -239,6 +294,10 @@ function validateBill(body) {
   if (!Number.isInteger(Number(body.dueDays ?? 10)) || Number(body.dueDays ?? 10) < 1) return 'Due days must be a whole number of at least 1.';
   if (!Array.isArray(body.items) || body.items.length === 0) return 'Add at least one line item.';
   if (!Number.isFinite(Number(body.totalAmount)) || Number(body.totalAmount) < 0) return 'Enter a valid total amount.';
+  if (body.purchasePrice !== undefined && body.purchasePrice !== null && body.purchasePrice !== '') {
+    if (!Number.isFinite(Number(body.purchasePrice)) || Number(body.purchasePrice) < 0) return 'Enter a valid purchase price.';
+    if (Math.abs(Number(body.purchasePrice) * 100 - Math.round(Number(body.purchasePrice) * 100)) > 0.000001) return 'Purchase price must use no more than two decimal places.';
+  }
   if (!Number.isFinite(Number(body.percentageIncrease ?? 0)) || Number(body.percentageIncrease ?? 0) < 0) return 'Percentage of increase must be a non-negative number.';
   if (body.paymentStatus !== undefined && !['Paid', 'Unpaid'].includes(body.paymentStatus)) return 'Payment status must be Paid or Unpaid.';
   for (const [index, item] of body.items.entries()) {
@@ -249,6 +308,9 @@ function validateBill(body) {
     for (const key of ['rateExclTax', 'rateInclTax', 'amount']) {
       if (!Number.isFinite(Number(item[key])) || Number(item[key]) < 0) return `Line ${index + 1}: ${key} must be a valid non-negative number.`;
     }
+    if (Number(item.rateInclTax) > 0 && Number(item.rateInclTax) < Number(item.rateExclTax)) {
+      return `Line ${index + 1}: rate including tax cannot be less than rate excluding tax.`;
+    }
   }
   return null;
 }
@@ -258,19 +320,41 @@ function cellValue(row, key) {
   return value ?? '';
 }
 function billFromRow(row) {
+  const totalAmount = Number(cellValue(row, 'billedPrice')) || 0;
+  const paidAmount = Number(cellValue(row, 'amountReceived')) || 0;
+  const rawPurchasePrice = cellValue(row, 'receivedPrice');
+  const hasPurchasePrice = rawPurchasePrice !== '';
+  const purchasePrice = hasPurchasePrice ? Number(rawPurchasePrice) || 0 : null;
+  const profitAmount = hasPurchasePrice
+    ? Math.round((totalAmount - purchasePrice + Number.EPSILON) * 100) / 100
+    : null;
+  const dueOn = cellValue(row, 'dueOn');
+  const dueDateValue = /^\d{4}-\d{2}-\d{2}$/.test(String(dueOn)) ? String(dueOn) : '';
   return {
-    billId: cellValue(row, 'billId'),
-    createdAt: cellValue(row, 'createdAt'),
-    invoiceDate: cellValue(row, 'invoiceDate'),
-    sellerAddress: cellValue(row, 'sellerAddress'),
-    shipToName: cellValue(row, 'shipToName'),
-    shipToAddress: cellValue(row, 'shipToAddress'),
-    vehicleNo: cellValue(row, 'vehicleNo'),
-    totalAmount: Number(cellValue(row, 'totalAmount')) || 0,
-    discountAmount: Number(cellValue(row, 'discountAmount')) || 0,
-    roundOffAmount: Number(cellValue(row, 'roundOffAmount')) || 0,
-    paymentStatus: cellValue(row, 'paymentStatus'),
-    paidOn: cellValue(row, 'paidOn') || null
+    billId: cellValue(row, 'invoice'),
+    sourceInvoiceNo: cellValue(row, 'invoice'),
+    createdAt: '',
+    invoiceDate: cellValue(row, 'date'),
+    totalAmount,
+    billedPrice: totalAmount,
+    paidAmount,
+    amountReceived: paidAmount,
+    amountBalanced: Math.round((totalAmount - paidAmount + Number.EPSILON) * 100) / 100,
+    purchasePrice,
+    receivedPrice: purchasePrice,
+    profitRate: purchasePrice > 0 ? profitAmount / purchasePrice : null,
+    profitAmount,
+    sourceSheet: row.worksheet?.name || '',
+    ...(dueDateValue ? { dueDate: dueDateValue } : {}),
+    ...(Number.isFinite(Number(cellValue(row, 'dueDays'))) && cellValue(row, 'dueDays') !== ''
+      ? { dueDays: Number(cellValue(row, 'dueDays')) }
+      : {}),
+    sourceDueTerms: dueDateValue ? '' : String(dueOn || ''),
+    paymentStatus: paidAmount >= totalAmount ? 'Paid' : paidAmount > 0 ? 'Partial' : 'Unpaid',
+    paidOn: null,
+    shipToName: cellValue(row, 'company'),
+    vehicleNo: '',
+    items: []
   };
 }
 function localDate() {
@@ -295,13 +379,17 @@ function summarizeVendors(bills, payments) {
     if (!vendorName) continue;
     const key = vendorName.toLocaleLowerCase();
     if (!vendors.has(key)) {
-      vendors.set(key, { vendorName, billCount: 0, totalAmount: 0, legacyPaidAmount: 0, payments: [] });
+      vendors.set(key, { vendorName, billCount: 0, totalAmount: 0, legacyPaidAmount: 0, importedPaidAmount: 0, payments: [] });
     }
     const vendor = vendors.get(key);
     const amount = Math.round((Number(bill.totalAmount) || 0) * 100);
+    const billPaidAmount = bill.paidAmount === undefined
+      ? (bill.paymentStatus === 'Paid' ? amount : 0)
+      : Math.max(0, Math.round((Number(bill.paidAmount) || 0) * 100));
     vendor.billCount += 1;
     vendor.totalAmount += amount;
-    if (bill.paymentStatus === 'Paid') vendor.legacyPaidAmount += amount;
+    vendor.legacyPaidAmount += billPaidAmount;
+    if (bill.source === 'payment-tracker') vendor.importedPaidAmount += billPaidAmount;
   }
   for (const payment of payments) {
     const vendor = vendors.get(text(payment.vendorName).toLocaleLowerCase());
@@ -316,6 +404,7 @@ function summarizeVendors(bills, payments) {
       totalAmount: vendor.totalAmount / 100,
       paidAmount: paidAmount / 100,
       unpaidAmount: Math.max(0, vendor.totalAmount - paidAmount) / 100,
+      importedPaidAmount: vendor.importedPaidAmount / 100,
       payments: vendor.payments.slice().sort((a, b) => b.date.localeCompare(a.date))
     };
   }).sort((a, b) => a.vendorName.localeCompare(b.vendorName));
@@ -357,7 +446,11 @@ function withCalculatedInvoiceTotalsWhenItemsExist(bill) {
 }
 
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { index: 'dashboard.html' }));
+
+app.get('/api/health', (_request, response) => {
+  response.json({ status: 'ok', version: '3' });
+});
 
 app.post('/api/bills', async (request, response) => {
   const validationError = validateBill(request.body || {});
@@ -370,7 +463,7 @@ app.post('/api/bills', async (request, response) => {
       let latestNumber = Number(workbook.getWorksheet('Metadata').getCell('A2').value) || 0;
       billsSheet.eachRow((row, rowNumber) => {
         if (rowNumber === 1) return;
-        const match = /^CGS-(\d+)$/.exec(String(row.getCell('billId').value || ''));
+        const match = /^CGS-(\d+)$/.exec(String(row.getCell('invoice').value || ''));
         if (match) latestNumber = Math.max(latestNumber, Number(match[1]));
       });
       const billId = `CGS-${String(latestNumber + 1).padStart(4, '0')}`;
@@ -380,8 +473,7 @@ app.post('/api/bills', async (request, response) => {
       const rateMultiplier = 1 + percentageIncrease / 100;
       const increaseRate = (rate) => Math.round((Number(rate) * rateMultiplier + Number.EPSILON) * 100) / 100;
       const items = request.body.items.map((item, index) => {
-        const amountBeforeIncrease = Number(item.amount);
-        const amount = Math.round((amountBeforeIncrease * (1 + percentageIncrease / 100) + Number.EPSILON) * 100) / 100;
+        const amount = Math.round((Number(item.amount) * rateMultiplier + Number.EPSILON) * 100) / 100;
         return {
           slNo: index + 1,
           description: text(item.description),
@@ -390,7 +482,6 @@ app.post('/api/bills', async (request, response) => {
           unit: text(item.unit),
           rateExclTax: increaseRate(item.rateExclTax),
           rateInclTax: increaseRate(item.rateInclTax),
-          amountBeforeIncrease,
           amount,
           isDiscount: Boolean(item.isDiscount)
         };
@@ -403,8 +494,16 @@ app.post('/api/bills', async (request, response) => {
       const taxPaise = taxSummary.reduce((sum, row) => sum + Math.round(row.taxAmount * 100), 0);
       const calculatedPaise = subtotalPaise - discountPaise + taxPaise;
       const roundedTotalPaise = Math.ceil(calculatedPaise / 100) * 100;
+      const purchasePricePaise = request.body.purchasePrice === undefined
+        || request.body.purchasePrice === null
+        || request.body.purchasePrice === ''
+        ? null
+        : Math.round(Number(request.body.purchasePrice) * 100);
+      const profitPaise = purchasePricePaise === null ? null : roundedTotalPaise - purchasePricePaise;
+      const purchasePrice = purchasePricePaise === null ? null : purchasePricePaise / 100;
       const bill = {
         billId,
+        sourceInvoiceNo: billId,
         createdAt: new Date().toISOString(),
         invoiceDate: text(request.body.invoiceDate),
         dueDays: Number(request.body.dueDays ?? 10),
@@ -415,6 +514,14 @@ app.post('/api/bills', async (request, response) => {
         shipToAddress: text(request.body.shipToAddress),
         vehicleNo: text(request.body.vehicleNo).toUpperCase().replace(/\s/g, ''),
         totalAmount: roundedTotalPaise / 100,
+        billedPrice: roundedTotalPaise / 100,
+        paidAmount: paymentStatus === 'Paid' ? roundedTotalPaise / 100 : 0,
+        amountReceived: paymentStatus === 'Paid' ? roundedTotalPaise / 100 : 0,
+        amountBalanced: paymentStatus === 'Paid' ? 0 : roundedTotalPaise / 100,
+        purchasePrice,
+        receivedPrice: purchasePrice,
+        profitAmount: profitPaise === null ? null : profitPaise / 100,
+        profitRate: purchasePricePaise > 0 ? profitPaise / purchasePricePaise : null,
         discountAmount: discountPaise / 100,
         roundOffAmount: (roundedTotalPaise - calculatedPaise) / 100,
         paymentStatus,
@@ -422,9 +529,10 @@ app.post('/api/bills', async (request, response) => {
         percentageIncrease,
         items
       };
+      bill.ewayBillDraft = buildEwayBillDraft(bill);
       const previousJson = await readJsonLedger();
       await writeJsonRecords([...previousJson.records, bill]);
-      billsSheet.addRow(bill);
+      billsSheet.addRow(trackerRowFromBill(bill));
       items.forEach((item) => {
         itemsSheet.addRow({
           billId,
@@ -564,6 +672,9 @@ app.get('/api/bills/:billId/pdf', async (request, response) => {
       return record ? withCalculatedInvoiceTotalsWhenItemsExist(record) : null;
     });
     if (!bill) return response.status(404).json({ error: 'Bill not found.' });
+    if (bill.source === 'payment-tracker') {
+      return response.status(409).json({ error: 'The payment tracker does not contain the original invoice line items needed to create a tax invoice.' });
+    }
     const pdf = await createInvoicePdf(bill);
     const safeBillId = String(bill.billId).replace(/[^A-Za-z0-9-]/g, '');
     response.setHeader('Content-Type', 'application/pdf');
@@ -586,7 +697,7 @@ app.delete('/api/bills/:billId', async (request, response) => {
       const billRows = [];
       const itemRows = [];
       billsSheet.eachRow((row, rowNumber) => {
-        if (rowNumber > 1 && String(row.getCell('billId').value) === request.params.billId) billRows.push(rowNumber);
+        if (rowNumber > 1 && String(row.getCell('invoice').value) === request.params.billId) billRows.push(rowNumber);
       });
       itemsSheet.eachRow((row, rowNumber) => {
         if (rowNumber > 1 && String(row.getCell('billId').value) === request.params.billId) itemRows.push(rowNumber);
@@ -621,18 +732,25 @@ app.patch('/api/bills/:billId/status', async (request, response) => {
       const sheet = workbook.getWorksheet('Bills');
       let targetRow;
       sheet.eachRow((row, rowNumber) => {
-        if (rowNumber > 1 && String(row.getCell('billId').value) === request.params.billId) targetRow = row;
+        if (rowNumber > 1 && String(row.getCell('invoice').value) === request.params.billId) targetRow = row;
       });
       if (!targetRow) return null;
       const previousJson = await readJsonLedger();
       const matchingRecord = previousJson.records.find((record) => record.billId === request.params.billId);
       if (matchingRecord) {
         matchingRecord.paymentStatus = paymentStatus;
+        matchingRecord.paidAmount = paymentStatus === 'Paid' ? Number(matchingRecord.totalAmount) || 0 : 0;
+        matchingRecord.amountReceived = matchingRecord.paidAmount;
+        matchingRecord.amountBalanced = Math.round(((Number(matchingRecord.totalAmount) || 0) - matchingRecord.paidAmount + Number.EPSILON) * 100) / 100;
         matchingRecord.paidOn = paymentStatus === 'Paid' ? localDate() : '';
         await writeJsonRecords(previousJson.records);
       }
-      targetRow.getCell('paymentStatus').value = paymentStatus;
-      targetRow.getCell('paidOn').value = paymentStatus === 'Paid' ? localDate() : '';
+      const billedPrice = Number(targetRow.getCell('billedPrice').value) || 0;
+      const amountReceived = paymentStatus === 'Paid'
+        ? billedPrice
+        : 0;
+      targetRow.getCell('amountReceived').value = amountReceived;
+      targetRow.getCell('amountBalanced').value = Math.round((billedPrice - amountReceived + Number.EPSILON) * 100) / 100;
       try {
         synchronizeMonthlySheets(workbook, sheet);
         await workbook.xlsx.writeFile(WORKBOOK_PATH);
@@ -640,7 +758,7 @@ app.patch('/api/bills/:billId/status', async (request, response) => {
         if (matchingRecord) await restoreJsonLedger(previousJson.content);
         throw error;
       }
-      return billFromRow(targetRow);
+      return { ...billFromRow(targetRow), ...(matchingRecord ? { paidOn: matchingRecord.paidOn } : {}) };
     });
     if (!bill) return response.status(404).json({ error: 'Bill not found.' });
     response.json(bill);
@@ -649,7 +767,7 @@ app.patch('/api/bills/:billId/status', async (request, response) => {
   }
 });
 
-async function start() {
+async function initializeWorkbook() {
   await fs.mkdir(DATA_DIRECTORY, { recursive: true });
   await serializeWorkbook(async () => {
     const workbook = await openWorkbook();
@@ -657,6 +775,10 @@ async function start() {
     if (paymentLedger.content === null) await writePaymentRecords([]);
     await workbook.xlsx.writeFile(WORKBOOK_PATH);
   });
+}
+
+async function start() {
+  await initializeWorkbook();
   const server = app.listen(PORT, () => {
     console.log(`CGS Global Enterprises Bill Book running at http://localhost:${server.address().port}`);
     const extractor = spawn(process.execPath, [EXTRACTOR_SERVER_PATH], {
@@ -685,7 +807,11 @@ async function start() {
   });
 }
 
-start().catch((error) => {
-  console.error('Unable to initialize bills.xlsx:', error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  start().catch((error) => {
+    console.error('Unable to initialize bills.xlsx:', error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { initializeWorkbook };

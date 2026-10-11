@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#123b48">
-  <title>Explore Bills | CGS Global Enterprises</title>
+  <title>Customer Accounts | CGS Global Enterprises</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="/css/style.css">
@@ -18,33 +18,34 @@
         <span class="brand-copy"><strong>CGS GLOBAL ENTERPRISES</strong><small>Reliable billing, clearly recorded.</small></span>
       </a>
       <nav class="main-nav" aria-label="Main navigation">
-        <a class="nav-link" href="/">New Bill</a>
-        <a class="nav-link is-active" href="/explore.html" aria-current="page">Explore Bills</a>
-        <a class="nav-link" href="/history.html">History</a>
+        <a class="nav-link" href="/">Overview</a>
+        <a class="nav-link" href="/index.html">New Bill</a>
+        <a class="nav-link is-active" href="/explore.html" aria-current="page">Accounts</a>
+        <a class="nav-link" href="/history.html">Bill history</a>
       </nav>
     </div>
   </header>
 
   <main class="page-shell history-shell">
     <div class="page-heading">
-      <div><p class="eyebrow">VENDOR ACCOUNTS</p><h1>Explore bills</h1><p class="page-subtitle">Search customer accounts, check balances, and record payments received.</p></div>
-      <a class="button button-primary new-bill-link" href="/">+ New bill</a>
+      <div><p class="eyebrow">CUSTOMER ACCOUNTS</p><h1>Customer accounts</h1><p class="page-subtitle">Search customer balances and record payments received.</p></div>
+      <a class="button button-primary new-bill-link" href="/index.html">+ New bill</a>
     </div>
 
     <section class="summary-strip dashboard-summary" aria-label="Payment summary">
       <div class="summary-item"><span class="summary-label">Total amount</span><strong id="summary-total-amount">₹0.00</strong></div>
-      <div class="summary-item"><span class="summary-label">Paid amount</span><strong id="summary-paid-amount" class="summary-paid">₹0.00</strong></div>
-      <div class="summary-item"><span class="summary-label">Total unpaid amount</span><strong id="summary-unpaid-amount" class="summary-unpaid">₹0.00</strong></div>
+      <div class="summary-item"><span class="summary-label">Amount received</span><strong id="summary-paid-amount" class="summary-paid">₹0.00</strong></div>
+      <div class="summary-item"><span class="summary-label">Outstanding</span><strong id="summary-unpaid-amount" class="summary-unpaid">₹0.00</strong></div>
     </section>
 
     <section class="panel explore-panel" aria-labelledby="record-payment-heading">
       <div class="panel-heading">
-        <div><p class="section-index">01</p><h2 id="record-payment-heading">Record a vendor payment</h2></div>
+        <div><p class="section-index">01</p><h2 id="record-payment-heading">Record a customer payment</h2></div>
       </div>
       <form id="payment-form" class="payment-form">
         <div class="field-group">
-          <label for="payment-vendor">Vendor (Ship To name)</label>
-          <select id="payment-vendor" required><option value="">Select a vendor</option></select>
+          <label for="payment-vendor">Customer (Ship To name)</label>
+          <select id="payment-vendor" required><option value="">Select a customer</option></select>
         </div>
         <div class="field-group">
           <label for="payment-date">Payment date</label>
@@ -60,7 +61,7 @@
         </div>
         <button class="button button-primary payment-submit" id="record-payment" type="submit">Record payment</button>
       </form>
-      <p class="field-hint payment-hint">Payments reduce the selected vendor’s combined balance; they are recorded by vendor and date, not assigned to individual bills.</p>
+      <p class="field-hint payment-hint">A receipt reduces the selected customer’s combined balance. Dated receipts are recorded for the account, not assigned to individual bills.</p>
     </section>
 
     <section class="panel explore-panel" aria-labelledby="vendors-heading">
@@ -69,27 +70,28 @@
         <span class="vendor-count" id="vendor-count">0 vendors</span>
       </div>
       <div class="history-toolbar explore-toolbar">
-        <div class="field-group search-field"><label for="search-vendors">Filter by vendor name</label><input id="search-vendors" type="search" placeholder="Type a vendor name" autocomplete="off"></div>
+        <div class="field-group search-field"><label for="search-vendors">Filter by customer name</label><input id="search-vendors" type="search" placeholder="Type a customer name" autocomplete="off"></div>
       </div>
       <div class="history-table-wrap">
         <table class="history-table vendor-table">
-          <thead><tr><th scope="col">Vendor</th><th scope="col">Bills</th><th scope="col" class="amount-column">Total amount</th><th scope="col" class="amount-column">Paid amount</th><th scope="col" class="amount-column">Unpaid amount</th><th scope="col">Action</th></tr></thead>
+          <thead><tr><th scope="col">Customer</th><th scope="col">Bills</th><th scope="col" class="amount-column">Total billed</th><th scope="col" class="amount-column">Received</th><th scope="col" class="amount-column">Outstanding</th><th scope="col">Action</th></tr></thead>
           <tbody id="vendors-body"></tbody>
         </table>
       </div>
-      <div class="empty-state" id="vendors-empty" hidden><span class="empty-mark" aria-hidden="true">—</span><h2>No matching vendors</h2><p>Try another vendor name or create a bill first.</p></div>
+      <div class="empty-state" id="vendors-empty" hidden><span class="empty-mark" aria-hidden="true">—</span><h2>No matching customers</h2><p>Try another customer name or create a bill first.</p></div>
       <p class="load-error" id="load-error" role="alert" hidden></p>
     </section>
 
     <section class="panel explore-panel" aria-labelledby="payments-heading">
-      <div class="panel-heading panel-heading-row"><div><p class="section-index">03</p><h2 id="payments-heading">Payment history</h2></div><span class="selected-vendor" id="selected-vendor-label">Select a vendor to view payments</span></div>
+      <div class="panel-heading panel-heading-row"><div><p class="section-index">03</p><h2 id="payments-heading">Receipt history</h2></div><span class="selected-vendor" id="selected-vendor-label">Select a customer to view receipts</span></div>
       <div class="history-table-wrap">
         <table class="history-table payment-history-table">
           <thead><tr><th scope="col">Payment ID</th><th scope="col">Date</th><th scope="col" class="amount-column">Amount received</th><th scope="col" class="amount-column">Balance after payment</th></tr></thead>
           <tbody id="payments-body"></tbody>
         </table>
       </div>
-      <div class="empty-state payment-empty" id="payments-empty" hidden><p>No recorded payments for this vendor yet.</p></div>
+      <p class="imported-receipts-note" id="imported-receipts-note" hidden></p>
+      <div class="empty-state payment-empty" id="payments-empty" hidden><p id="payments-empty-copy">No dated payments recorded for this vendor yet.</p></div>
     </section>
   </main>
   <div class="toast-region" id="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>

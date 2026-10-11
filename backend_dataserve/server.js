@@ -13,7 +13,6 @@ const PORT = Number(process.env.EXTRACTOR_PORT) || 3001;
 const MAIN_ORIGINS = new Set(['http://localhost:3000', 'http://127.0.0.1:3000']);
 const DATA_DIRECTORY = path.join(__dirname, 'data');
 const DRAFTS_PATH = path.join(DATA_DIRECTORY, 'extracted-drafts.json');
-const RAW_CONTENT_PATH = path.join(DATA_DIRECTORY, 'extracted-content.json');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
 let extractionQueue = Promise.resolve();
@@ -39,10 +38,9 @@ app.use(applyCors);
 app.get('/api/health', (_request, response) => {
   response.json({
     ok: true,
+    version: '3',
     extractionStage,
-    extractionMode: 'local-vendor-parser',
-    draftsPath: 'backend_dataserve/data/extracted-drafts.json',
-    extractedContentPath: 'backend_dataserve/data/extracted-content.json'
+    extractionMode: 'local-vendor-parser'
   });
 });
 app.get('/api/drafts', async (_request, response) => {
@@ -52,15 +50,6 @@ app.get('/api/drafts', async (_request, response) => {
   } catch (error) {
     if (error.code === 'ENOENT') return response.json([]);
     response.status(500).json({ error: 'Could not read extracted drafts JSON.' });
-  }
-});
-app.get('/api/content', async (_request, response) => {
-  try {
-    const records = JSON.parse(await fs.readFile(RAW_CONTENT_PATH, 'utf8'));
-    response.json(Array.isArray(records) ? records : []);
-  } catch (error) {
-    if (error.code === 'ENOENT') return response.json([]);
-    response.status(500).json({ error: 'Could not read extracted PDF content JSON.' });
   }
 });
 app.post('/api/extract', upload.single('pdf'), async (request, response) => {
@@ -83,27 +72,15 @@ app.post('/api/extract', upload.single('pdf'), async (request, response) => {
         throw error;
       }
       const uploadedFileName = path.basename(request.file.originalname).slice(0, 180);
-      const rawRecord = {
-        contentId: crypto.randomUUID(),
-        extractedAt: new Date().toISOString(),
-        uploadedFileName,
-        pageCount: parsedPdf.numpages,
-        text: invoiceText
-      };
-      extractionStage = 'saving full PDF text to JSON';
-      await appendJsonRecord(RAW_CONTENT_PATH, rawRecord);
-
       extractionStage = 'parsing vendor invoice fields locally';
       const draft = parseVendorInvoiceText(invoiceText);
       if (!draft) {
         return {
-          rawTextSaved: true,
-          rawContentId: rawRecord.contentId,
           uploadedFileName,
           pageCount: parsedPdf.numpages,
           rawText: invoiceText,
           draft: null,
-          warning: 'The PDF text was saved, but no invoice fields could be identified. Review the extracted text and enter the bill details manually.'
+          warning: 'No invoice fields could be identified. The extracted text is available on this page only and was not saved. Enter the bill details manually.'
         };
       }
       const entry = {
@@ -117,9 +94,8 @@ app.post('/api/extract', upload.single('pdf'), async (request, response) => {
       await appendJsonRecord(DRAFTS_PATH, entry);
       return {
         ...entry,
-        rawTextSaved: true,
-        rawContentId: rawRecord.contentId,
-        warning: draft.items.length ? '' : 'Invoice details were identified, but line items were not recognized. Review the fields and add the items manually.'
+        rawText: invoiceText,
+        warning: draft.items.length ? '' : 'Invoice details and available addresses were identified, but line items were not recognized. Review the fields and add the items manually.'
       };
     });
     response.json(result);
@@ -139,12 +115,27 @@ app.use((error, _request, response, _next) => {
   response.status(500).json({ error: 'The PDF extraction service encountered an unexpected error.' });
 });
 
-const server = app.listen(PORT, HOST, () => {
-  console.log(`Vendor PDF extractor listening at http://${HOST}:${server.address().port}`);
+async function removeStoredSourceText() {
+  try {
+    await fs.unlink(path.join(DATA_DIRECTORY, 'extracted-content.json'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+
+let server;
+removeStoredSourceText().then(() => {
+  server = app.listen(PORT, HOST, () => {
+    console.log(`Vendor PDF extractor listening at http://${HOST}:${server.address().port}`);
+  });
+}).catch((error) => {
+  console.error('Could not remove stored extracted source text:', error);
+  process.exitCode = 1;
 });
 
 async function close() {
-  server.close(() => process.exit(0));
+  if (server) server.close(() => process.exit(0));
+  else process.exit(0);
 }
 process.once('SIGINT', close);
 process.once('SIGTERM', close);

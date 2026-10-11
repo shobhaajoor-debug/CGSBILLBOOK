@@ -40,12 +40,12 @@ if errorlevel 1 (
 )
 
 set "APP_URL=http://localhost:3000"
-powershell.exe -NoProfile -Command "try { $r=Invoke-RestMethod -Uri 'http://localhost:3000/api/explore' -TimeoutSec 2; if ($r.summary -and $null -ne $r.vendors) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+powershell.exe -NoProfile -Command "try { $r=Invoke-RestMethod -Uri 'http://localhost:3000/api/health' -TimeoutSec 2; if ($r.version -eq '3') { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 (
   powershell.exe -NoProfile -Command "if (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" >nul 2>&1
   if not errorlevel 1 (
     echo An older bill book server is still running on port 3000.
-    echo Close its server window, then run this shortcut again to load the vendor data backend.
+    echo Close its server window, then run this shortcut again to load the latest app and imported tracker data.
     pause
     exit /b 1
   )
@@ -57,7 +57,7 @@ if errorlevel 1 (
 )
 
 for /l %%i in (1,1,60) do (
-  powershell.exe -NoProfile -Command "try { $r=Invoke-RestMethod -Uri 'http://localhost:3000/api/explore' -TimeoutSec 2; if ($r.summary -and $null -ne $r.vendors) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+  powershell.exe -NoProfile -Command "try { $r=Invoke-RestMethod -Uri 'http://localhost:3000/api/health' -TimeoutSec 2; if ($r.version -eq '3') { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
   if not errorlevel 1 goto open_app
   timeout /t 1 /nobreak >nul
 )

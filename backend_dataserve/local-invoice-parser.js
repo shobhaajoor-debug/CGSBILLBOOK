@@ -331,13 +331,13 @@ function parseGenericParties(text) {
     const labelLine = lines[index];
     const inline = labelLine.replace(pattern, '').replace(/^[:\s-]+/, '').trim();
     const followingLines = [];
-    for (const line of lines.slice(index + 1, index + 5)) {
-      if (/^(?:seller|supplier|vendor|from|bill\s*to|billed\s*to|buyer|customer|consignee|ship\s*to|vehicle|truck|transport|invoice|date|item|description|qty|quantity|rate|amount|total|gstin|gst)\b/i.test(line)) break;
+    for (const line of lines.slice(index + 1)) {
+      if (/^(?:seller|supplier|vendor|from|bill\s*to|billed\s*to|buyer|customer|consignee|ship\s*to|vehicle|truck|transport|invoice|date|item|description|qty|quantity|rate|amount|total)\b/i.test(line)) break;
       followingLines.push(line);
     }
     const values = [inline, ...followingLines]
       .filter(Boolean)
-      .filter((line) => !/^(?:gstin|gst|phone|mobile|email|invoice|date|ship to|bill to)\b/i.test(line));
+      .filter((line) => !/^(?:phone|mobile|email|invoice|date|ship to|bill to)\b/i.test(line));
     return { name: values[0] || '', address: values.slice(1).join(' ') };
   };
   const seller = readAfterLabel(/^(?:seller|supplier|vendor|from)(?:\s*[:\-]|\s*$)\s*/i);

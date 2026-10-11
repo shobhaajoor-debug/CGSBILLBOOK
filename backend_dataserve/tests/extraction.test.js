@@ -31,21 +31,20 @@ test('vendor PDF contains readable text and recognizable party labels', { skip: 
   assert.match(parsed.text, /Consignee \(Ship to\)/i);
 });
 
-test('stores all extracted PDF text and appends later uploads to JSON', { skip: !hasInputInvoice }, async () => {
-  const pdfBuffer = await fs.readFile(path.join(projectRoot, 'input.pdf'));
-  const parsed = await pdfParse(pdfBuffer);
+test('appends structured bill drafts with full addresses without saving extracted source text', async () => {
   const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'cgs-extracted-json-'));
-  const jsonPath = path.join(temporaryDirectory, 'extracted-content.json');
+  const jsonPath = path.join(temporaryDirectory, 'extracted-drafts.json');
   try {
-    const completeText = parsed.text.trim();
-    await appendJsonRecord(jsonPath, { uploadedFileName: 'input.pdf', pageCount: parsed.numpages, text: completeText });
-    await appendJsonRecord(jsonPath, { uploadedFileName: 'second.pdf', pageCount: 1, text: 'Second upload.' });
+    await appendJsonRecord(jsonPath, {
+      uploadedFileName: 'input.pdf',
+      draft: { shipToName: 'Customer One', shipToAddress: 'No. 1206, 5th Cross Road, Bengaluru, Karnataka - 560010' }
+    });
+    await appendJsonRecord(jsonPath, { uploadedFileName: 'second.pdf', draft: { shipToName: 'Customer Two' } });
     const records = JSON.parse(await fs.readFile(jsonPath, 'utf8'));
     assert.equal(records.length, 2);
-    assert.equal(records[0].text, completeText);
-    assert.match(records[0].text, /Buyer \(Bill to\)/);
-    assert.match(records[0].text, /Consignee \(Ship to\)/);
-    assert.match(records[0].text, /1,88,969\.00/);
+    assert.equal(records[0].draft.shipToName, 'Customer One');
+    assert.equal(records[0].draft.shipToAddress, 'No. 1206, 5th Cross Road, Bengaluru, Karnataka - 560010');
+    assert.equal('text' in records[0], false);
   } finally {
     await fs.rm(temporaryDirectory, { recursive: true, force: true });
   }
@@ -251,4 +250,28 @@ test('local parser analyzes a differently formatted invoice without vendor-speci
     [draft.items[0].description, draft.items[0].quantity, draft.items[0].unit, draft.items[0].rateExclTax, draft.items[0].amount],
     ['Paper reams', 5, 'Pcs', 100, 500]
   );
+});
+
+test('generic party extraction retains all address lines including GSTIN', () => {
+  const text = [
+    'INVOICE',
+    'Seller: Acme Supplies',
+    '12 Market Road',
+    'Industrial Estate, Bengaluru',
+    'Karnataka - 560068',
+    'GSTIN: 29ABCDE1234F1Z5',
+    'Bill To: Shreya Retail',
+    '42 Lake View Road',
+    'Nagarabhavi, Bengaluru',
+    'Karnataka - 560072',
+    'GSTIN: 29FGHIJ5678K1Z2',
+    'Vehicle No: KA02AF7135',
+    'Item Description Qty Unit Rate Amount',
+    'Paper reams 5 Pcs 100.00 500.00',
+    'Total: INR 500.00'
+  ].join('\n');
+
+  const draft = parseVendorInvoiceText(text);
+  assert.match(draft.sellerAddress, /12 Market Road Industrial Estate, Bengaluru Karnataka - 560068 GSTIN: 29ABCDE1234F1Z5/);
+  assert.match(draft.shipToAddress, /42 Lake View Road Nagarabhavi, Bengaluru Karnataka - 560072 GSTIN: 29FGHIJ5678K1Z2/);
 });

@@ -28,12 +28,24 @@ function showToast(message, isError = false) {
   window.setTimeout(() => toast.remove(), 4000);
 }
 function updateSummary() {
-  const paidCount = bills.filter((bill) => bill.paymentStatus === 'Paid').length;
-  const unpaid = bills.filter((bill) => bill.paymentStatus === 'Unpaid');
+  const paidCount = bills.filter((bill) => paymentState(bill) === 'Paid').length;
+  const unpaid = bills.filter((bill) => paymentState(bill) !== 'Paid');
   document.querySelector('#summary-total').textContent = String(bills.length);
   document.querySelector('#summary-paid').textContent = String(paidCount);
   document.querySelector('#summary-unpaid').textContent = String(unpaid.length);
-  document.querySelector('#summary-unpaid-amount').textContent = formatAmount(unpaid.reduce((sum, bill) => sum + (Number(bill.totalAmount) || 0), 0));
+  document.querySelector('#summary-unpaid-amount').textContent = formatAmount(unpaid.reduce(
+    (sum, bill) => sum + Math.max(0, (Number(bill.totalAmount) || 0) - paidAmount(bill)),
+    0
+  ));
+}
+function paidAmount(bill) {
+  return Number(bill.paidAmount ?? (bill.paymentStatus === 'Paid' ? bill.totalAmount : 0)) || 0;
+}
+function paymentState(bill) {
+  const total = Number(bill.totalAmount) || 0;
+  const paid = paidAmount(bill);
+  if (paid >= total) return 'Paid';
+  return paid > 0 ? 'Partial' : 'Unpaid';
 }
 function createCell(value, className) {
   const cell = document.createElement('td');
@@ -46,33 +58,44 @@ function renderBills() {
   const status = statusFilter.value;
   const visibleBills = bills.filter((bill) => {
     const matchesName = String(bill.shipToName || '').toLocaleLowerCase().includes(search);
-    return matchesName && (status === 'All' || bill.paymentStatus === status);
+    const matchesStatus = status === 'All' || (status === 'Paid'
+      ? paymentState(bill) === 'Paid'
+      : paymentState(bill) !== 'Paid');
+    return matchesName && matchesStatus;
   });
   historyBody.replaceChildren();
   for (const bill of visibleBills) {
     const row = document.createElement('tr');
     row.append(createCell(bill.billId || '', 'bill-number-cell'));
     const nameCell = createCell(bill.shipToName || '');
-    const downloadLink = document.createElement('a');
-    downloadLink.className = 'download-bill-link';
-    downloadLink.href = `/bill.html?billId=${encodeURIComponent(bill.billId)}`;
-    downloadLink.textContent = 'Download bill';
-    nameCell.append(downloadLink);
+    const detailLink = document.createElement('a');
+    detailLink.className = 'download-bill-link';
+    detailLink.href = `/bill.html?billId=${encodeURIComponent(bill.billId)}`;
+    detailLink.textContent = bill.source === 'payment-tracker' ? 'View tracker record' : 'View / download invoice';
+    nameCell.append(detailLink);
     row.append(nameCell);
-    row.append(createCell(bill.shipToAddress || ''));
     row.append(createCell(formatDate(bill.invoiceDate)));
     row.append(createCell(formatAmount(bill.totalAmount)));
+    row.append(createCell(formatAmount(paidAmount(bill))));
+    row.append(createCell(formatAmount((Number(bill.totalAmount) || 0) - paidAmount(bill))));
+    row.append(createCell(bill.profitAmount !== null && bill.profitAmount !== undefined
+      ? formatAmount(bill.profitAmount)
+      : '—'));
+    row.append(createCell(bill.profitRate !== null && bill.profitRate !== undefined
+      ? `${(Number(bill.profitRate) * 100).toFixed(2)}%`
+      : '—'));
     const statusCell = document.createElement('td');
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'status-toggle';
     toggle.dataset.billId = bill.billId;
+    const state = paymentState(bill);
     const badge = document.createElement('span');
-    badge.className = `status-badge ${bill.paymentStatus === 'Paid' ? 'paid' : 'unpaid'}`;
-    badge.textContent = bill.paymentStatus;
+    badge.className = `status-badge ${state.toLocaleLowerCase()}`;
+    badge.textContent = state === 'Partial' ? 'Partially paid' : state;
     const action = document.createElement('span');
     action.className = 'status-action';
-    action.textContent = bill.paymentStatus === 'Paid' ? 'Mark unpaid' : 'Mark paid';
+    action.textContent = state === 'Paid' ? 'Mark unpaid' : 'Mark paid';
     toggle.setAttribute('aria-label', `${action.textContent}: ${bill.shipToName}`);
     toggle.append(badge, action);
     toggle.addEventListener('click', () => changePaymentStatus(bill, toggle));
@@ -98,8 +121,10 @@ function renderBills() {
 }
 async function changePaymentStatus(bill, toggle) {
   const previousStatus = bill.paymentStatus;
+  const previousPaidAmount = paidAmount(bill);
   const nextStatus = previousStatus === 'Paid' ? 'Unpaid' : 'Paid';
   bill.paymentStatus = nextStatus;
+  bill.paidAmount = nextStatus === 'Paid' ? Number(bill.totalAmount) || 0 : 0;
   updateSummary();
   renderBills();
   const updatedToggle = [...historyBody.querySelectorAll('.status-toggle')].find((button) => button.dataset.billId === bill.billId);
@@ -113,12 +138,14 @@ async function changePaymentStatus(bill, toggle) {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Unable to update payment status.');
     bill.paymentStatus = result.paymentStatus;
+    bill.paidAmount = result.paidAmount;
     bill.paidOn = result.paidOn;
     updateSummary();
     renderBills();
     showToast(`${bill.shipToName}: marked ${result.paymentStatus.toLowerCase()}.`);
   } catch (error) {
     bill.paymentStatus = previousStatus;
+    bill.paidAmount = previousPaidAmount;
     updateSummary();
     renderBills();
     showToast(error.message || 'Unable to update payment status.', true);

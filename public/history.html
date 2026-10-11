@@ -19,9 +19,10 @@
         <span class="brand-copy"><strong>CGS GLOBAL ENTERPRISES</strong><small>Reliable billing, clearly recorded.</small></span>
       </a>
       <nav class="main-nav" aria-label="Main navigation">
-        <a class="nav-link" href="/">New Bill</a>
-        <a class="nav-link" href="/explore.html">Explore Bills</a>
-        <a class="nav-link is-active" href="/history.html" aria-current="page">History</a>
+        <a class="nav-link" href="/">Overview</a>
+        <a class="nav-link" href="/index.html">New Bill</a>
+        <a class="nav-link" href="/explore.html">Accounts</a>
+        <a class="nav-link is-active" href="/history.html" aria-current="page">Bill history</a>
       </nav>
     </div>
   </header>
@@ -29,29 +30,29 @@
   <main class="page-shell history-shell">
     <div class="page-heading history-heading">
       <div><p class="eyebrow">RECORDS</p><h1>Bill history</h1><p class="page-subtitle">Review invoices and keep payment status up to date.</p></div>
-      <a class="button button-primary new-bill-link" href="/">+ New bill</a>
+      <a class="button button-primary new-bill-link" href="/index.html">+ New bill</a>
     </div>
 
     <section class="summary-strip" aria-label="Bill summary">
       <div class="summary-item"><span class="summary-label">Total bills</span><strong id="summary-total">0</strong></div>
       <div class="summary-item"><span class="summary-label">Paid</span><strong id="summary-paid" class="summary-paid">0</strong></div>
-      <div class="summary-item"><span class="summary-label">Unpaid</span><strong id="summary-unpaid" class="summary-unpaid">0</strong></div>
-      <div class="summary-item summary-wide"><span class="summary-label">Total unpaid amount</span><strong id="summary-unpaid-amount">₹0.00</strong></div>
+      <div class="summary-item"><span class="summary-label">Unpaid / partial</span><strong id="summary-unpaid" class="summary-unpaid">0</strong></div>
+      <div class="summary-item summary-wide"><span class="summary-label">Outstanding</span><strong id="summary-unpaid-amount">₹0.00</strong></div>
     </section>
 
     <section class="panel history-panel" aria-label="Bills">
       <div class="history-toolbar">
-        <div class="field-group search-field"><label for="search-bills">Search ship-to name</label><input id="search-bills" type="search" placeholder="Search customers" autocomplete="off"></div>
-        <div class="field-group filter-field"><label for="status-filter">Payment status</label><select id="status-filter"><option value="All">All statuses</option><option value="Paid">Paid</option><option value="Unpaid">Unpaid</option></select></div>
+        <div class="field-group search-field"><label for="search-bills">Search customer</label><input id="search-bills" type="search" placeholder="Search customers" autocomplete="off"></div>
+        <div class="field-group filter-field"><label for="status-filter">Payment status</label><select id="status-filter"><option value="All">All statuses</option><option value="Paid">Paid</option><option value="Unpaid">Unpaid / partial</option></select></div>
         <button class="button button-secondary excel-download-button" id="download-excel" type="button">Download Excel</button>
       </div>
       <div class="history-table-wrap">
-        <table class="history-table">
-          <thead><tr><th scope="col">Bill number</th><th scope="col">Ship to</th><th scope="col">Address</th><th scope="col">Invoice date</th><th scope="col" class="amount-column">Total amount</th><th scope="col">Payment status</th><th scope="col">Actions</th></tr></thead>
+        <table class="history-table ledger-history-table">
+          <thead><tr><th scope="col">Invoice</th><th scope="col">Customer</th><th scope="col">Date</th><th scope="col" class="amount-column">Billed</th><th scope="col" class="amount-column">Received</th><th scope="col" class="amount-column">Balance</th><th scope="col" class="amount-column">Profit</th><th scope="col" class="amount-column">Profit %</th><th scope="col">Payment status</th><th scope="col">Actions</th></tr></thead>
           <tbody id="history-body"></tbody>
         </table>
       </div>
-      <div class="empty-state" id="empty-state" hidden><span class="empty-mark" aria-hidden="true">—</span><h2 id="empty-title">No bills yet</h2><p id="empty-copy">Bills you create will appear here.</p><a class="button button-secondary" href="/">Create your first bill</a></div>
+      <div class="empty-state" id="empty-state" hidden><span class="empty-mark" aria-hidden="true">—</span><h2 id="empty-title">No bills yet</h2><p id="empty-copy">Bills you create will appear here.</p><a class="button button-secondary" href="/index.html">Create your first bill</a></div>
       <p class="load-error" id="load-error" role="alert" hidden></p>
     </section>
   </main>

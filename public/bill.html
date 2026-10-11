@@ -16,14 +16,37 @@
     </div>
     <p class="bill-loading" id="bill-loading" role="status">Loading invoice…</p>
     <p class="bill-error" id="bill-error" role="alert" hidden></p>
+    <section class="tracker-record-paper" id="tracker-record" aria-labelledby="tracker-record-heading" hidden>
+      <div class="invoice-kicker"><strong>PAYMENT TRACKER RECORD</strong><span>IMPORTED LEDGER DATA</span></div>
+      <header class="tracker-record-heading">
+        <div><p class="eyebrow">SOURCE INVOICE <span id="tracker-record-invoice"></span></p><h1 id="tracker-record-heading"></h1><p class="page-subtitle">This record reflects the payment tracker. It is not a tax invoice.</p></div>
+        <span class="status-badge" id="tracker-record-status"></span>
+      </header>
+      <dl class="tracker-record-grid">
+        <div><dt>Invoice date</dt><dd id="tracker-record-date"></dd></div>
+        <div><dt>Due date</dt><dd id="tracker-record-due-date"></dd></div>
+        <div><dt>Due terms</dt><dd id="tracker-record-due-terms"></dd></div>
+        <div><dt>Source sheet</dt><dd id="tracker-record-sheet"></dd></div>
+        <div><dt>Total billed</dt><dd id="tracker-record-total"></dd></div>
+        <div><dt>Amount received</dt><dd id="tracker-record-paid"></dd></div>
+        <div><dt>Remaining on invoice</dt><dd id="tracker-record-balance"></dd></div>
+        <div><dt>Purchase price</dt><dd id="tracker-record-purchase"></dd></div>
+        <div><dt>Profit rate</dt><dd id="tracker-record-rate"></dd></div>
+        <div><dt>Profit amount</dt><dd id="tracker-record-profit"></dd></div>
+        <div><dt>Source payment status</dt><dd id="tracker-record-source-status"></dd></div>
+        <div><dt>Delay days</dt><dd id="tracker-record-delay"></dd></div>
+      </dl>
+      <details class="tracker-source-details">
+        <summary>Original payment-tracker row fields</summary>
+        <dl class="tracker-source-fields" id="tracker-source-fields"></dl>
+      </details>
+    </section>
     <article class="invoice-paper" id="invoice-paper" aria-label="Invoice" hidden>
       <div class="invoice-kicker"><strong>TAX INVOICE</strong><span>ORIGINAL FOR RECIPIENT</span></div>
       <header class="invoice-header">
         <section class="invoice-seller">
-          <h1>CGS GLOBAL ENTERPRISES</h1>
-          <p>1st Cross, Site No 33, Chandapura Anekal road, Iggalur Village,
-HM Layout, Bengaluru, Bengaluru Urb, Bangalore, Karnataka, 560099
-GSTIN: 29CNDPN4917R1Z5  Mobile: 6360649010
+          <h1 id="invoice-seller-name">CGS GLOBAL ENTERPRISES</h1>
+          <p>GSTIN: 29CNDPN4917R1Z5  Mobile: 6360649010
 PAN Number: CNDPN4917R
 Email: cgsglobalenterprises@gmail.com</p>
         </section>
@@ -33,9 +56,9 @@ Email: cgsglobalenterprises@gmail.com</p>
           <div class="invoice-meta-pair vehicle-meta"><strong>Vehicle No.</strong><span id="vehicle-number"></span></div>
         </section>
       </header>
-      <section class="invoice-parties" aria-label="Bill and shipping addresses">
-        <div class="invoice-party"><h2>BILL TO</h2><strong id="bill-to-name"></strong><p id="bill-to-address"></p></div>
-        <div class="invoice-party"><h2>SHIP TO</h2><strong id="ship-to-name"></strong><p id="ship-to-address"></p></div>
+      <section class="invoice-parties" aria-label="Invoice parties">
+        <div class="invoice-party"><h2>SELLER ADDRESS</h2><strong id="invoice-party-seller-name"></strong><p id="invoice-party-seller-address"></p></div>
+        <div class="invoice-party"><h2>CUSTOMER / SHIP TO</h2><strong id="customer-name"></strong><p id="customer-address"></p></div>
       </section>
       <section class="invoice-items-wrap" aria-label="Invoice line items">
         <table class="invoice-items">
